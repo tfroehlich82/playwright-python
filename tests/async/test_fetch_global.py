@@ -17,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 
@@ -123,6 +124,81 @@ async def test_should_return_error_with_wrong_credentials(
     response = await request.get(server.EMPTY_PAGE)
     assert response.status == 401
     assert response.ok is False
+
+
+async def test_should_work_with_correct_credentials_and_matching_origin(
+    playwright: Playwright, server: Server
+):
+    server.set_auth("/empty.html", "user", "pass")
+    request = await playwright.request.new_context(
+        http_credentials={
+            "username": "user",
+            "password": "pass",
+            "origin": server.PREFIX,
+        }
+    )
+    response = await request.get(server.EMPTY_PAGE)
+    assert response.status == 200
+    await response.dispose()
+
+
+async def test_should_work_with_correct_credentials_and_matching_origin_case_insensitive(
+    playwright: Playwright, server: Server
+):
+    server.set_auth("/empty.html", "user", "pass")
+    request = await playwright.request.new_context(
+        http_credentials={
+            "username": "user",
+            "password": "pass",
+            "origin": server.PREFIX.upper(),
+        }
+    )
+    response = await request.get(server.EMPTY_PAGE)
+    assert response.status == 200
+    await response.dispose()
+
+
+async def test_should_return_error_with_correct_credentials_and_mismatching_scheme(
+    playwright: Playwright, server: Server
+):
+    server.set_auth("/empty.html", "user", "pass")
+    request = await playwright.request.new_context(
+        http_credentials={
+            "username": "user",
+            "password": "pass",
+            "origin": server.PREFIX.replace("http://", "https://"),
+        }
+    )
+    response = await request.get(server.EMPTY_PAGE)
+    assert response.status == 401
+    await response.dispose()
+
+
+async def test_should_return_error_with_correct_credentials_and_mismatching_hostname(
+    playwright: Playwright, server: Server
+):
+    server.set_auth("/empty.html", "user", "pass")
+    hostname = urlparse(server.PREFIX).hostname
+    origin = server.PREFIX.replace(hostname, "mismatching-hostname")
+    request = await playwright.request.new_context(
+        http_credentials={"username": "user", "password": "pass", "origin": origin}
+    )
+    response = await request.get(server.EMPTY_PAGE)
+    assert response.status == 401
+    await response.dispose()
+
+
+async def test_should_return_error_with_correct_credentials_and_mismatching_port(
+    playwright: Playwright, server: Server
+):
+    server.set_auth("/empty.html", "user", "pass")
+    origin = server.PREFIX.replace(str(server.PORT), str(server.PORT + 1))
+    request = await playwright.request.new_context(
+        http_credentials={"username": "user", "password": "pass", "origin": origin}
+    )
+    response = await request.get(server.EMPTY_PAGE)
+    assert response.status == 401
+    await response.dispose()
 
 
 async def test_should_support_global_ignore_https_errors_option(
@@ -325,3 +401,14 @@ async def test_should_throw_an_error_when_max_redirects_is_less_than_0(
                 server.PREFIX + "/a/redirect1", method=method, max_redirects=-1
             )
         assert "'max_redirects' must be greater than or equal to '0'" in str(exc_info)
+
+
+async def test_should_serialize_null_values_in_json(
+    playwright: Playwright, server: Server
+) -> None:
+    request = await playwright.request.new_context()
+    server.set_route("/echo", lambda req: (req.write(req.post_body), req.finish()))
+    response = await request.post(server.PREFIX + "/echo", data={"foo": None})
+    assert response.status == 200
+    assert await response.text() == '{"foo":null}'
+    await request.dispose()

@@ -83,6 +83,7 @@ from playwright._impl._playwright import Playwright as PlaywrightImpl
 from playwright._impl._selectors import Selectors as SelectorsImpl
 from playwright._impl._tracing import Tracing as TracingImpl
 from playwright._impl._video import Video as VideoImpl
+from playwright._impl._web_error import WebError as WebErrorImpl
 
 
 class Request(AsyncBase):
@@ -168,6 +169,21 @@ class Request(AsyncBase):
         """Request.frame
 
         Returns the `Frame` that initiated this request.
+
+        **Usage**
+
+        ```py
+        frame_url = request.frame.url
+        ```
+
+        **Details**
+
+        Note that in some cases the frame is not available, and this method will throw.
+        - When request originates in the Service Worker. You can use `request.serviceWorker()` to check that.
+        - When navigation request is issued before the corresponding frame is created. You can use
+          `request.is_navigation_request()` to check that.
+
+        Here is an example that handles all the cases:
 
         Returns
         -------
@@ -329,6 +345,9 @@ class Request(AsyncBase):
         """Request.is_navigation_request
 
         Whether this request is driving frame's navigation.
+
+        Some navigation requests are issued before the corresponding frame is created, and therefore do not have
+        `request.frame()` available.
 
         Returns
         -------
@@ -744,7 +763,8 @@ class Route(AsyncBase):
         method: typing.Optional[str] = None,
         headers: typing.Optional[typing.Dict[str, str]] = None,
         post_data: typing.Optional[typing.Union[typing.Any, str, bytes]] = None,
-        max_redirects: typing.Optional[int] = None
+        max_redirects: typing.Optional[int] = None,
+        timeout: typing.Optional[float] = None
     ) -> "APIResponse":
         """Route.fetch
 
@@ -794,6 +814,8 @@ class Route(AsyncBase):
         max_redirects : Union[int, None]
             Maximum number of request redirects that will be followed automatically. An error will be thrown if the number is
             exceeded. Defaults to `20`. Pass `0` to not follow redirects.
+        timeout : Union[float, None]
+            Request timeout in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout.
 
         Returns
         -------
@@ -807,6 +829,7 @@ class Route(AsyncBase):
                 headers=mapping.to_impl(headers),
                 postData=mapping.to_impl(post_data),
                 maxRedirects=max_redirects,
+                timeout=timeout,
             )
         )
 
@@ -844,7 +867,7 @@ class Route(AsyncBase):
 
         ```py
         # Handle GET requests.
-        def handle_post(route):
+        def handle_get(route):
             if route.request.method != \"GET\":
                 route.fallback()
                 return
@@ -865,7 +888,7 @@ class Route(AsyncBase):
 
         ```py
         # Handle GET requests.
-        def handle_post(route):
+        def handle_get(route):
             if route.request.method != \"GET\":
                 route.fallback()
                 return
@@ -892,7 +915,7 @@ class Route(AsyncBase):
             # override headers
             headers = {
                 **request.headers,
-                \"foo\": \"foo-value\" # set \"foo\" header
+                \"foo\": \"foo-value\", # set \"foo\" header
                 \"bar\": None # remove \"bar\" header
             }
             await route.fallback(headers=headers)
@@ -905,7 +928,7 @@ class Route(AsyncBase):
             # override headers
             headers = {
                 **request.headers,
-                \"foo\": \"foo-value\" # set \"foo\" header
+                \"foo\": \"foo-value\", # set \"foo\" header
                 \"bar\": None # remove \"bar\" header
             }
             route.fallback(headers=headers)
@@ -954,7 +977,7 @@ class Route(AsyncBase):
             # override headers
             headers = {
                 **request.headers,
-                \"foo\": \"foo-value\" # set \"foo\" header
+                \"foo\": \"foo-value\", # set \"foo\" header
                 \"bar\": None # remove \"bar\" header
             }
             await route.continue_(headers=headers)
@@ -967,7 +990,7 @@ class Route(AsyncBase):
             # override headers
             headers = {
                 **request.headers,
-                \"foo\": \"foo-value\" # set \"foo\" header
+                \"foo\": \"foo-value\", # set \"foo\" header
                 \"bar\": None # remove \"bar\" header
             }
             route.continue_(headers=headers)
@@ -1021,7 +1044,7 @@ class WebSocket(AsyncBase):
         self,
         event: Literal["framereceived"],
         f: typing.Callable[
-            ["typing.Dict"], "typing.Union[typing.Awaitable[None], None]"
+            ["typing.Union[bytes, str]"], "typing.Union[typing.Awaitable[None], None]"
         ],
     ) -> None:
         """
@@ -1032,7 +1055,7 @@ class WebSocket(AsyncBase):
         self,
         event: Literal["framesent"],
         f: typing.Callable[
-            ["typing.Dict"], "typing.Union[typing.Awaitable[None], None]"
+            ["typing.Union[bytes, str]"], "typing.Union[typing.Awaitable[None], None]"
         ],
     ) -> None:
         """
@@ -1068,7 +1091,7 @@ class WebSocket(AsyncBase):
         self,
         event: Literal["framereceived"],
         f: typing.Callable[
-            ["typing.Dict"], "typing.Union[typing.Awaitable[None], None]"
+            ["typing.Union[bytes, str]"], "typing.Union[typing.Awaitable[None], None]"
         ],
     ) -> None:
         """
@@ -1079,7 +1102,7 @@ class WebSocket(AsyncBase):
         self,
         event: Literal["framesent"],
         f: typing.Callable[
-            ["typing.Dict"], "typing.Union[typing.Awaitable[None], None]"
+            ["typing.Union[bytes, str]"], "typing.Union[typing.Awaitable[None], None]"
         ],
     ) -> None:
         """
@@ -1279,6 +1302,9 @@ class Keyboard(AsyncBase):
     async def type(self, text: str, *, delay: typing.Optional[float] = None) -> None:
         """Keyboard.type
 
+        **NOTE** In most cases, you should use `locator.fill()` instead. You only need to press keys one by one if
+        there is special keyboard handling on the page - in this case use `locator.press_sequentially()`.
+
         Sends a `keydown`, `keypress`/`input`, and `keyup` event for each character in the text.
 
         To press a special key, like `Control` or `ArrowDown`, use `keyboard.press()`.
@@ -1313,6 +1339,8 @@ class Keyboard(AsyncBase):
 
     async def press(self, key: str, *, delay: typing.Optional[float] = None) -> None:
         """Keyboard.press
+
+        **NOTE** In most cases, you should use `locator.press()` instead.
 
         `key` can specify the intended
         [keyboardEvent.key](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key) value or a single character
@@ -1646,7 +1674,7 @@ class JSHandle(AsyncBase):
         **Usage**
 
         ```py
-        handle = await page.evaluate_handle(\"({window, document})\")
+        handle = await page.evaluate_handle(\"({ window, document })\")
         properties = await handle.get_properties()
         window_handle = properties.get(\"window\")
         document_handle = properties.get(\"document\")
@@ -1654,7 +1682,7 @@ class JSHandle(AsyncBase):
         ```
 
         ```py
-        handle = page.evaluate_handle(\"({window, document})\")
+        handle = page.evaluate_handle(\"({ window, document })\")
         properties = handle.get_properties()
         window_handle = properties.get(\"window\")
         document_handle = properties.get(\"document\")
@@ -2178,7 +2206,7 @@ class ElementHandle(JSHandle):
         **Usage**
 
         ```py
-        # single selection matching the value
+        # Single selection matching the value or label
         await handle.select_option(\"blue\")
         # single selection matching the label
         await handle.select_option(label=\"blue\")
@@ -2187,7 +2215,7 @@ class ElementHandle(JSHandle):
         ```
 
         ```py
-        # single selection matching the value
+        # Single selection matching the value or label
         handle.select_option(\"blue\")
         # single selection matching both the label
         handle.select_option(label=\"blue\")
@@ -2312,7 +2340,7 @@ class ElementHandle(JSHandle):
         [control](https://developer.mozilla.org/en-US/docs/Web/API/HTMLLabelElement/control), the control will be filled
         instead.
 
-        To send fine-grained keyboard events, use `element_handle.type()`.
+        To send fine-grained keyboard events, use `locator.press_sequentially()`.
 
         Parameters
         ----------
@@ -2452,30 +2480,6 @@ class ElementHandle(JSHandle):
         To press a special key, like `Control` or `ArrowDown`, use `element_handle.press()`.
 
         **Usage**
-
-        ```py
-        await element_handle.type(\"hello\") # types instantly
-        await element_handle.type(\"world\", delay=100) # types slower, like a user
-        ```
-
-        ```py
-        element_handle.type(\"hello\") # types instantly
-        element_handle.type(\"world\", delay=100) # types slower, like a user
-        ```
-
-        An example of typing into a text field and then submitting the form:
-
-        ```py
-        element_handle = await page.query_selector(\"input\")
-        await element_handle.type(\"some text\")
-        await element_handle.press(\"Enter\")
-        ```
-
-        ```py
-        element_handle = page.query_selector(\"input\")
-        element_handle.type(\"some text\")
-        element_handle.press(\"Enter\")
-        ```
 
         Parameters
         ----------
@@ -2761,7 +2765,8 @@ class ElementHandle(JSHandle):
         animations: typing.Optional[Literal["allow", "disabled"]] = None,
         caret: typing.Optional[Literal["hide", "initial"]] = None,
         scale: typing.Optional[Literal["css", "device"]] = None,
-        mask: typing.Optional[typing.List["Locator"]] = None
+        mask: typing.Optional[typing.List["Locator"]] = None,
+        mask_color: typing.Optional[str] = None
     ) -> bytes:
         """ElementHandle.screenshot
 
@@ -2808,7 +2813,10 @@ class ElementHandle(JSHandle):
             Defaults to `"device"`.
         mask : Union[List[Locator], None]
             Specify locators that should be masked when the screenshot is taken. Masked elements will be overlaid with a pink
-            box `#FF00FF` that completely covers its bounding box.
+            box `#FF00FF` (customized by `maskColor`) that completely covers its bounding box.
+        mask_color : Union[str, None]
+            Specify the color of the overlay box for masked elements, in
+            [CSS color format](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value). Default color is pink `#FF00FF`.
 
         Returns
         -------
@@ -2826,6 +2834,7 @@ class ElementHandle(JSHandle):
                 caret=caret,
                 scale=scale,
                 mask=mapping.to_impl(mask),
+                mask_color=mask_color,
             )
         )
 
@@ -2887,13 +2896,13 @@ class ElementHandle(JSHandle):
         ```py
         tweet_handle = await page.query_selector(\".tweet\")
         assert await tweet_handle.eval_on_selector(\".like\", \"node => node.innerText\") == \"100\"
-        assert await tweet_handle.eval_on_selector(\".retweets\", \"node => node.innerText\") = \"10\"
+        assert await tweet_handle.eval_on_selector(\".retweets\", \"node => node.innerText\") == \"10\"
         ```
 
         ```py
         tweet_handle = page.query_selector(\".tweet\")
         assert tweet_handle.eval_on_selector(\".like\", \"node => node.innerText\") == \"100\"
-        assert tweet_handle.eval_on_selector(\".retweets\", \"node => node.innerText\") = \"10\"
+        assert tweet_handle.eval_on_selector(\".retweets\", \"node => node.innerText\") == \"10\"
         ```
 
         Parameters
@@ -3115,11 +3124,11 @@ class Accessibility(AsyncBase):
 
         ```py
         def find_focused_node(node):
-            if (node.get(\"focused\"))
+            if node.get(\"focused\"):
                 return node
             for child in (node.get(\"children\") or []):
                 found_node = find_focused_node(child)
-                if (found_node)
+                if found_node:
                     return found_node
             return None
 
@@ -3131,11 +3140,11 @@ class Accessibility(AsyncBase):
 
         ```py
         def find_focused_node(node):
-            if (node.get(\"focused\"))
+            if node.get(\"focused\"):
                 return node
             for child in (node.get(\"children\") or []):
                 found_node = find_focused_node(child)
-                if (found_node)
+                if found_node:
                     return found_node
             return None
 
@@ -3353,8 +3362,8 @@ class Frame(AsyncBase):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         referer : Union[str, None]
@@ -3419,8 +3428,8 @@ class Frame(AsyncBase):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         timeout : Union[float, None]
@@ -3475,8 +3484,8 @@ class Frame(AsyncBase):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         timeout : Union[float, None]
@@ -3527,7 +3536,8 @@ class Frame(AsyncBase):
             document, the method resolves immediately. Can be one of:
             - `'load'` - wait for the `load` event to be fired.
             - `'domcontentloaded'` - wait for the `DOMContentLoaded` event to be fired.
-            - `'networkidle'` - wait until there are no network connections for at least `500` ms.
+            - `'networkidle'` - **DISCOURAGED** wait until there are no network connections for at least `500` ms. Don't use
+              this method for testing, rely on web assertions to assess readiness instead.
         timeout : Union[float, None]
             Maximum operation time in milliseconds, defaults to 30 seconds, pass `0` to disable timeout. The default value can
             be changed by using the `browser_context.set_default_navigation_timeout()`,
@@ -3794,9 +3804,9 @@ class Frame(AsyncBase):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             chromium = playwright.chromium
             browser = await chromium.launch()
             page = await browser.new_page()
@@ -3813,9 +3823,9 @@ class Frame(AsyncBase):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             chromium = playwright.chromium
             browser = chromium.launch()
             page = browser.new_page()
@@ -4016,6 +4026,7 @@ class Frame(AsyncBase):
             When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
             element, the call throws an exception.
         timeout : Union[float, None]
+            Deprecated: This option is ignored. `frame.is_hidden()` does not wait for the element to become hidden and returns immediately.
 
         Returns
         -------
@@ -4049,6 +4060,7 @@ class Frame(AsyncBase):
             When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
             element, the call throws an exception.
         timeout : Union[float, None]
+            Deprecated: This option is ignored. `frame.is_visible()` does not wait for the element to become visible and returns immediately.
 
         Returns
         -------
@@ -4265,6 +4277,9 @@ class Frame(AsyncBase):
     ) -> None:
         """Frame.set_content
 
+        This method internally calls [document.write()](https://developer.mozilla.org/en-US/docs/Web/API/Document/write),
+        inheriting all its specific characteristics and behaviors.
+
         Parameters
         ----------
         html : str
@@ -4278,8 +4293,8 @@ class Frame(AsyncBase):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         """
@@ -4623,7 +4638,7 @@ class Frame(AsyncBase):
         [control](https://developer.mozilla.org/en-US/docs/Web/API/HTMLLabelElement/control), the control will be filled
         instead.
 
-        To send fine-grained keyboard events, use `frame.type()`.
+        To send fine-grained keyboard events, use `locator.press_sequentially()`.
 
         Parameters
         ----------
@@ -4662,7 +4677,9 @@ class Frame(AsyncBase):
         selector: str,
         *,
         has_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
-        has: typing.Optional["Locator"] = None
+        has_not_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
+        has: typing.Optional["Locator"] = None,
+        has_not: typing.Optional["Locator"] = None
     ) -> "Locator":
         """Frame.locator
 
@@ -4682,9 +4699,17 @@ class Frame(AsyncBase):
             Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
             passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
             `<article><div>Playwright</div></article>`.
+        has_not_text : Union[Pattern[str], str, None]
+            Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
+            When passed a [string], matching is case-insensitive and searches for a substring.
         has : Union[Locator, None]
             Matches elements containing an element that matches an inner locator. Inner locator is queried against the outer
             one. For example, `article` that has `text=Playwright` matches `<article><div>Playwright</div></article>`.
+
+            Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
+        has_not : Union[Locator, None]
+            Matches elements that do not contain an element that matches an inner locator. Inner locator is queried against the
+            outer one. For example, `article` that does not have `div` matches `<article><span>Playwright</span></article>`.
 
             Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
 
@@ -4695,7 +4720,11 @@ class Frame(AsyncBase):
 
         return mapping.from_impl(
             self._impl_obj.locator(
-                selector=selector, has_text=has_text, has=has._impl_obj if has else None
+                selector=selector,
+                has_text=has_text,
+                has_not_text=has_not_text,
+                has=has._impl_obj if has else None,
+                has_not=has_not._impl_obj if has_not else None,
             )
         )
 
@@ -4748,22 +4777,26 @@ class Frame(AsyncBase):
     ) -> "Locator":
         """Frame.get_by_label
 
-        Allows locating input elements by the text of the associated label.
+        Allows locating input elements by the text of the associated `<label>` or `aria-labelledby` element, or by the
+        `aria-label` attribute.
 
         **Usage**
 
-        For example, this method will find the input by label text \"Password\" in the following DOM:
+        For example, this method will find inputs by label \"Username\" and \"Password\" in the following DOM:
 
         ```html
+        <input aria-label=\"Username\">
         <label for=\"password-input\">Password:</label>
         <input id=\"password-input\">
         ```
 
         ```py
+        await page.get_by_label(\"Username\").fill(\"john\")
         await page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
         ```py
+        page.get_by_label(\"Username\").fill(\"john\")
         page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
@@ -5564,7 +5597,7 @@ class Frame(AsyncBase):
         **Usage**
 
         ```py
-        # single selection matching the value
+        # Single selection matching the value or label
         await frame.select_option(\"select#colors\", \"blue\")
         # single selection matching the label
         await frame.select_option(\"select#colors\", label=\"blue\")
@@ -5573,7 +5606,7 @@ class Frame(AsyncBase):
         ```
 
         ```py
-        # single selection matching the value
+        # Single selection matching the value or label
         frame.select_option(\"select#colors\", \"blue\")
         # single selection matching both the label
         frame.select_option(\"select#colors\", label=\"blue\")
@@ -5736,16 +5769,6 @@ class Frame(AsyncBase):
         To press a special key, like `Control` or `ArrowDown`, use `keyboard.press()`.
 
         **Usage**
-
-        ```py
-        await frame.type(\"#mytextarea\", \"hello\") # types instantly
-        await frame.type(\"#mytextarea\", \"world\", delay=100) # types slower, like a user
-        ```
-
-        ```py
-        frame.type(\"#mytextarea\", \"hello\") # types instantly
-        frame.type(\"#mytextarea\", \"world\", delay=100) # types slower, like a user
-        ```
 
         Parameters
         ----------
@@ -6006,9 +6029,9 @@ class Frame(AsyncBase):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = await webkit.launch()
             page = await browser.new_page()
@@ -6023,9 +6046,9 @@ class Frame(AsyncBase):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = webkit.launch()
             page = browser.new_page()
@@ -6193,7 +6216,9 @@ class FrameLocator(AsyncBase):
         selector_or_locator: typing.Union["Locator", str],
         *,
         has_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
-        has: typing.Optional["Locator"] = None
+        has_not_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
+        has: typing.Optional["Locator"] = None,
+        has_not: typing.Optional["Locator"] = None
     ) -> "Locator":
         """FrameLocator.locator
 
@@ -6210,9 +6235,17 @@ class FrameLocator(AsyncBase):
             Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
             passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
             `<article><div>Playwright</div></article>`.
+        has_not_text : Union[Pattern[str], str, None]
+            Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
+            When passed a [string], matching is case-insensitive and searches for a substring.
         has : Union[Locator, None]
             Matches elements containing an element that matches an inner locator. Inner locator is queried against the outer
             one. For example, `article` that has `text=Playwright` matches `<article><div>Playwright</div></article>`.
+
+            Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
+        has_not : Union[Locator, None]
+            Matches elements that do not contain an element that matches an inner locator. Inner locator is queried against the
+            outer one. For example, `article` that does not have `div` matches `<article><span>Playwright</span></article>`.
 
             Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
 
@@ -6225,7 +6258,9 @@ class FrameLocator(AsyncBase):
             self._impl_obj.locator(
                 selector_or_locator=selector_or_locator,
                 has_text=has_text,
+                has_not_text=has_not_text,
                 has=has._impl_obj if has else None,
+                has_not=has_not._impl_obj if has_not else None,
             )
         )
 
@@ -6278,22 +6313,26 @@ class FrameLocator(AsyncBase):
     ) -> "Locator":
         """FrameLocator.get_by_label
 
-        Allows locating input elements by the text of the associated label.
+        Allows locating input elements by the text of the associated `<label>` or `aria-labelledby` element, or by the
+        `aria-label` attribute.
 
         **Usage**
 
-        For example, this method will find the input by label text \"Password\" in the following DOM:
+        For example, this method will find inputs by label \"Username\" and \"Password\" in the following DOM:
 
         ```html
+        <input aria-label=\"Username\">
         <label for=\"password-input\">Password:</label>
         <input id=\"password-input\">
         ```
 
         ```py
+        await page.get_by_label(\"Username\").fill(\"john\")
         await page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
         ```py
+        page.get_by_label(\"Username\").fill(\"john\")
         page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
@@ -6888,9 +6927,9 @@ class Selectors(AsyncBase):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             tag_selector = \"\"\"
               {
                   // Returns the first element matching given selector in the root's subtree.
@@ -6926,9 +6965,9 @@ class Selectors(AsyncBase):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             tag_selector = \"\"\"
               {
                   // Returns the first element matching given selector in the root's subtree.
@@ -7050,6 +7089,18 @@ class ConsoleMessage(AsyncBase):
         """
         return mapping.from_impl(self._impl_obj.location)
 
+    @property
+    def page(self) -> typing.Optional["Page"]:
+        """ConsoleMessage.page
+
+        The page that produced this console message, if any.
+
+        Returns
+        -------
+        Union[Page, None]
+        """
+        return mapping.from_impl_nullable(self._impl_obj.page)
+
 
 mapping.register(ConsoleMessageImpl, ConsoleMessage)
 
@@ -7090,6 +7141,18 @@ class Dialog(AsyncBase):
         str
         """
         return mapping.from_maybe_impl(self._impl_obj.default_value)
+
+    @property
+    def page(self) -> typing.Optional["Page"]:
+        """Dialog.page
+
+        The page that initiated this dialog, if available.
+
+        Returns
+        -------
+        Union[Page, None]
+        """
+        return mapping.from_impl_nullable(self._impl_obj.page)
 
     async def accept(self, prompt_text: typing.Optional[str] = None) -> None:
         """Dialog.accept
@@ -7200,6 +7263,16 @@ class Download(AsyncBase):
         Copy the download to a user-specified path. It is safe to call this method while the download is still in progress.
         Will wait for the download to finish if necessary.
 
+        **Usage**
+
+        ```py
+        await download.save_as(\"/path/to/save/at/\" + download.suggested_filename)
+        ```
+
+        ```py
+        download.save_as(\"/path/to/save/at/\" + download.suggested_filename)
+        ```
+
         Parameters
         ----------
         path : Union[pathlib.Path, str]
@@ -7283,9 +7356,9 @@ class Page(AsyncContextManager):
         Emitted when JavaScript within the page calls one of console API methods, e.g. `console.log` or `console.dir`. Also
         emitted if the page throws an error or a warning.
 
-        The arguments passed into `console.log` appear as arguments on the event handler.
+        The arguments passed into `console.log` are available on the `ConsoleMessage` event handler argument.
 
-        An example of handling `console` event:
+        **Usage**
 
         ```py
         async def print_args(msg):
@@ -7295,7 +7368,7 @@ class Page(AsyncContextManager):
             print(values)
 
         page.on(\"console\", print_args)
-        await page.evaluate(\"console.log('hello', 5, {foo: 'bar'})\")
+        await page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
         ```
 
         ```py
@@ -7304,7 +7377,7 @@ class Page(AsyncContextManager):
                 print(arg.json_value())
 
         page.on(\"console\", print_args)
-        page.evaluate(\"console.log('hello', 5, {foo: 'bar'})\")
+        page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
         ```"""
 
     @typing.overload
@@ -7326,6 +7399,7 @@ class Page(AsyncContextManager):
             # or while waiting for an event.
             await page.wait_for_event(\"popup\")
         except Error as e:
+            pass
             # when the page crashes, exception message contains \"crash\".
         ```
 
@@ -7336,6 +7410,7 @@ class Page(AsyncContextManager):
             # or while waiting for an event.
             page.wait_for_event(\"popup\")
         except Error as e:
+            pass
             # when the page crashes, exception message contains \"crash\".
         ```"""
 
@@ -7351,12 +7426,14 @@ class Page(AsyncContextManager):
         [freeze](https://developer.mozilla.org/en-US/docs/Web/JavaScript/EventLoop#never_blocking) waiting for the dialog,
         and actions like click will never finish.
 
+        **Usage**
+
         ```python
         page.on(\"dialog\", lambda dialog: dialog.accept())
         ```
 
-        **NOTE** When no `page.on('dialog')` listeners are present, all dialogs are automatically dismissed.
-        """
+        **NOTE** When no `page.on('dialog')` or `browser_context.on('dialog')` listeners are present, all dialogs are
+        automatically dismissed."""
 
     @typing.overload
     def on(
@@ -7583,9 +7660,9 @@ class Page(AsyncContextManager):
         Emitted when JavaScript within the page calls one of console API methods, e.g. `console.log` or `console.dir`. Also
         emitted if the page throws an error or a warning.
 
-        The arguments passed into `console.log` appear as arguments on the event handler.
+        The arguments passed into `console.log` are available on the `ConsoleMessage` event handler argument.
 
-        An example of handling `console` event:
+        **Usage**
 
         ```py
         async def print_args(msg):
@@ -7595,7 +7672,7 @@ class Page(AsyncContextManager):
             print(values)
 
         page.on(\"console\", print_args)
-        await page.evaluate(\"console.log('hello', 5, {foo: 'bar'})\")
+        await page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
         ```
 
         ```py
@@ -7604,7 +7681,7 @@ class Page(AsyncContextManager):
                 print(arg.json_value())
 
         page.on(\"console\", print_args)
-        page.evaluate(\"console.log('hello', 5, {foo: 'bar'})\")
+        page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
         ```"""
 
     @typing.overload
@@ -7626,6 +7703,7 @@ class Page(AsyncContextManager):
             # or while waiting for an event.
             await page.wait_for_event(\"popup\")
         except Error as e:
+            pass
             # when the page crashes, exception message contains \"crash\".
         ```
 
@@ -7636,6 +7714,7 @@ class Page(AsyncContextManager):
             # or while waiting for an event.
             page.wait_for_event(\"popup\")
         except Error as e:
+            pass
             # when the page crashes, exception message contains \"crash\".
         ```"""
 
@@ -7651,12 +7730,14 @@ class Page(AsyncContextManager):
         [freeze](https://developer.mozilla.org/en-US/docs/Web/JavaScript/EventLoop#never_blocking) waiting for the dialog,
         and actions like click will never finish.
 
+        **Usage**
+
         ```python
         page.on(\"dialog\", lambda dialog: dialog.accept())
         ```
 
-        **NOTE** When no `page.on('dialog')` listeners are present, all dialogs are automatically dismissed.
-        """
+        **NOTE** When no `page.on('dialog')` or `browser_context.on('dialog')` listeners are present, all dialogs are
+        automatically dismissed."""
 
     @typing.overload
     def once(
@@ -8164,9 +8245,9 @@ class Page(AsyncContextManager):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             chromium = playwright.chromium
             browser = await chromium.launch()
             page = await browser.new_page()
@@ -8183,9 +8264,9 @@ class Page(AsyncContextManager):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             chromium = playwright.chromium
             browser = chromium.launch()
             page = browser.new_page()
@@ -8386,6 +8467,7 @@ class Page(AsyncContextManager):
             When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
             element, the call throws an exception.
         timeout : Union[float, None]
+            Deprecated: This option is ignored. `page.is_hidden()` does not wait for the↵element to become hidden and returns immediately.
 
         Returns
         -------
@@ -8419,6 +8501,7 @@ class Page(AsyncContextManager):
             When true, the call requires selector to resolve to a single element. If given selector resolves to more than one
             element, the call throws an exception.
         timeout : Union[float, None]
+            Deprecated: This option is ignored. `page.is_visible()` does not wait↵for the element to become visible and returns immediately.
 
         Returns
         -------
@@ -8840,14 +8923,14 @@ class Page(AsyncContextManager):
         ```py
         import asyncio
         import hashlib
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
         def sha256(text):
             m = hashlib.sha256()
             m.update(bytes(text, \"utf8\"))
             return m.hexdigest()
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = await webkit.launch(headless=False)
             page = await browser.new_page()
@@ -8871,14 +8954,14 @@ class Page(AsyncContextManager):
 
         ```py
         import hashlib
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
         def sha256(text):
             m = hashlib.sha256()
             m.update(bytes(text, \"utf8\"))
             return m.hexdigest()
 
-        def run(playwright):
+        def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = webkit.launch(headless=False)
             page = browser.new_page()
@@ -8938,9 +9021,9 @@ class Page(AsyncContextManager):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = await webkit.launch(headless=false)
             context = await browser.new_context()
@@ -8964,9 +9047,9 @@ class Page(AsyncContextManager):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = webkit.launch(headless=false)
             context = browser.new_context()
@@ -9076,6 +9159,9 @@ class Page(AsyncContextManager):
     ) -> None:
         """Page.set_content
 
+        This method internally calls [document.write()](https://developer.mozilla.org/en-US/docs/Web/API/Document/write),
+        inheriting all its specific characteristics and behaviors.
+
         Parameters
         ----------
         html : str
@@ -9089,8 +9175,8 @@ class Page(AsyncContextManager):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         """
@@ -9148,8 +9234,8 @@ class Page(AsyncContextManager):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         referer : Union[str, None]
@@ -9192,8 +9278,8 @@ class Page(AsyncContextManager):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
 
@@ -9259,7 +9345,8 @@ class Page(AsyncContextManager):
             document, the method resolves immediately. Can be one of:
             - `'load'` - wait for the `load` event to be fired.
             - `'domcontentloaded'` - wait for the `DOMContentLoaded` event to be fired.
-            - `'networkidle'` - wait until there are no network connections for at least `500` ms.
+            - `'networkidle'` - **DISCOURAGED** wait until there are no network connections for at least `500` ms. Don't use
+              this method for testing, rely on web assertions to assess readiness instead.
         timeout : Union[float, None]
             Maximum operation time in milliseconds, defaults to 30 seconds, pass `0` to disable timeout. The default value can
             be changed by using the `browser_context.set_default_navigation_timeout()`,
@@ -9306,8 +9393,8 @@ class Page(AsyncContextManager):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         timeout : Union[float, None]
@@ -9385,8 +9472,8 @@ class Page(AsyncContextManager):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
 
@@ -9425,8 +9512,8 @@ class Page(AsyncContextManager):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
 
@@ -9688,18 +9775,18 @@ class Page(AsyncContextManager):
 
         ```py
         def handle_route(route):
-          if (\"my-string\" in route.request.post_data)
+          if (\"my-string\" in route.request.post_data):
             route.fulfill(body=\"mocked-data\")
-          else
+          else:
             route.continue_()
         await page.route(\"/api/**\", handle_route)
         ```
 
         ```py
         def handle_route(route):
-          if (\"my-string\" in route.request.post_data)
+          if (\"my-string\" in route.request.post_data):
             route.fulfill(body=\"mocked-data\")
-          else
+          else:
             route.continue_()
         page.route(\"/api/**\", handle_route)
         ```
@@ -9767,13 +9854,13 @@ class Page(AsyncContextManager):
         url: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
         not_found: typing.Optional[Literal["abort", "fallback"]] = None,
         update: typing.Optional[bool] = None,
-        content: typing.Optional[Literal["attach", "embed", "omit"]] = None,
-        mode: typing.Optional[Literal["full", "minimal"]] = None
+        update_content: typing.Optional[Literal["attach", "embed"]] = None,
+        update_mode: typing.Optional[Literal["full", "minimal"]] = None
     ) -> None:
         """Page.route_from_har
 
         If specified the network requests that are made in the page will be served from the HAR file. Read more about
-        [Replaying from HAR](https://playwright.dev/python/docs/network#replaying-from-har).
+        [Replaying from HAR](https://playwright.dev/python/docs/mock#replaying-from-har).
 
         Playwright will not serve requests intercepted by Service Worker from the HAR file. See
         [this](https://github.com/microsoft/playwright/issues/1090) issue. We recommend disabling Service Workers when
@@ -9795,8 +9882,12 @@ class Page(AsyncContextManager):
         update : Union[bool, None]
             If specified, updates the given HAR with the actual network information instead of serving from file. The file is
             written to disk when `browser_context.close()` is called.
-        content : Union["attach", "embed", "omit", None]
-        mode : Union["full", "minimal", None]
+        update_content : Union["attach", "embed", None]
+            Optional setting to control resource content management. If `attach` is specified, resources are persisted as
+            separate files or entries in the ZIP archive. If `embed` is specified, content is stored inline the HAR file.
+        update_mode : Union["full", "minimal", None]
+            When set to `minimal`, only record information necessary for routing from HAR. This omits sizes, timing, page,
+            cookies, security and other types of HAR information that are not used when replaying from HAR. Defaults to `full`.
         """
 
         return mapping.from_maybe_impl(
@@ -9805,8 +9896,8 @@ class Page(AsyncContextManager):
                 url=url,
                 not_found=not_found,
                 update=update,
-                content=content,
-                mode=mode,
+                update_content=update_content,
+                update_mode=update_mode,
             )
         )
 
@@ -9823,7 +9914,8 @@ class Page(AsyncContextManager):
         animations: typing.Optional[Literal["allow", "disabled"]] = None,
         caret: typing.Optional[Literal["hide", "initial"]] = None,
         scale: typing.Optional[Literal["css", "device"]] = None,
-        mask: typing.Optional[typing.List["Locator"]] = None
+        mask: typing.Optional[typing.List["Locator"]] = None,
+        mask_color: typing.Optional[str] = None
     ) -> bytes:
         """Page.screenshot
 
@@ -9849,7 +9941,7 @@ class Page(AsyncContextManager):
             When true, takes a screenshot of the full scrollable page, instead of the currently visible viewport. Defaults to
             `false`.
         clip : Union[{x: float, y: float, width: float, height: float}, None]
-            An object which specifies clipping of the resulting image. Should have the following fields:
+            An object which specifies clipping of the resulting image.
         animations : Union["allow", "disabled", None]
             When set to `"disabled"`, stops CSS animations, CSS transitions and Web Animations. Animations get different
             treatment depending on their duration:
@@ -9868,7 +9960,10 @@ class Page(AsyncContextManager):
             Defaults to `"device"`.
         mask : Union[List[Locator], None]
             Specify locators that should be masked when the screenshot is taken. Masked elements will be overlaid with a pink
-            box `#FF00FF` that completely covers its bounding box.
+            box `#FF00FF` (customized by `maskColor`) that completely covers its bounding box.
+        mask_color : Union[str, None]
+            Specify the color of the overlay box for masked elements, in
+            [CSS color format](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value). Default color is pink `#FF00FF`.
 
         Returns
         -------
@@ -9888,6 +9983,7 @@ class Page(AsyncContextManager):
                 caret=caret,
                 scale=scale,
                 mask=mapping.to_impl(mask),
+                mask_color=mask_color,
             )
         )
 
@@ -10187,7 +10283,7 @@ class Page(AsyncContextManager):
         [control](https://developer.mozilla.org/en-US/docs/Web/API/HTMLLabelElement/control), the control will be filled
         instead.
 
-        To send fine-grained keyboard events, use `page.type()`.
+        To send fine-grained keyboard events, use `locator.press_sequentially()`.
 
         Parameters
         ----------
@@ -10226,7 +10322,9 @@ class Page(AsyncContextManager):
         selector: str,
         *,
         has_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
-        has: typing.Optional["Locator"] = None
+        has_not_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
+        has: typing.Optional["Locator"] = None,
+        has_not: typing.Optional["Locator"] = None
     ) -> "Locator":
         """Page.locator
 
@@ -10244,9 +10342,17 @@ class Page(AsyncContextManager):
             Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
             passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
             `<article><div>Playwright</div></article>`.
+        has_not_text : Union[Pattern[str], str, None]
+            Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
+            When passed a [string], matching is case-insensitive and searches for a substring.
         has : Union[Locator, None]
             Matches elements containing an element that matches an inner locator. Inner locator is queried against the outer
             one. For example, `article` that has `text=Playwright` matches `<article><div>Playwright</div></article>`.
+
+            Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
+        has_not : Union[Locator, None]
+            Matches elements that do not contain an element that matches an inner locator. Inner locator is queried against the
+            outer one. For example, `article` that does not have `div` matches `<article><span>Playwright</span></article>`.
 
             Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
 
@@ -10257,7 +10363,11 @@ class Page(AsyncContextManager):
 
         return mapping.from_impl(
             self._impl_obj.locator(
-                selector=selector, has_text=has_text, has=has._impl_obj if has else None
+                selector=selector,
+                has_text=has_text,
+                has_not_text=has_not_text,
+                has=has._impl_obj if has else None,
+                has_not=has_not._impl_obj if has_not else None,
             )
         )
 
@@ -10310,22 +10420,26 @@ class Page(AsyncContextManager):
     ) -> "Locator":
         """Page.get_by_label
 
-        Allows locating input elements by the text of the associated label.
+        Allows locating input elements by the text of the associated `<label>` or `aria-labelledby` element, or by the
+        `aria-label` attribute.
 
         **Usage**
 
-        For example, this method will find the input by label text \"Password\" in the following DOM:
+        For example, this method will find inputs by label \"Username\" and \"Password\" in the following DOM:
 
         ```html
+        <input aria-label=\"Username\">
         <label for=\"password-input\">Password:</label>
         <input id=\"password-input\">
         ```
 
         ```py
+        await page.get_by_label(\"Username\").fill(\"john\")
         await page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
         ```py
+        page.get_by_label(\"Username\").fill(\"john\")
         page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
@@ -11153,7 +11267,7 @@ class Page(AsyncContextManager):
         **Usage**
 
         ```py
-        # single selection matching the value
+        # Single selection matching the value or label
         await page.select_option(\"select#colors\", \"blue\")
         # single selection matching the label
         await page.select_option(\"select#colors\", label=\"blue\")
@@ -11162,7 +11276,7 @@ class Page(AsyncContextManager):
         ```
 
         ```py
-        # single selection matching the value
+        # Single selection matching the value or label
         page.select_option(\"select#colors\", \"blue\")
         # single selection matching both the label
         page.select_option(\"select#colors\", label=\"blue\")
@@ -11326,16 +11440,6 @@ class Page(AsyncContextManager):
         To press a special key, like `Control` or `ArrowDown`, use `keyboard.press()`.
 
         **Usage**
-
-        ```py
-        await page.type(\"#mytextarea\", \"hello\") # types instantly
-        await page.type(\"#mytextarea\", \"world\", delay=100) # types slower, like a user
-        ```
-
-        ```py
-        page.type(\"#mytextarea\", \"hello\") # types instantly
-        page.type(\"#mytextarea\", \"world\", delay=100) # types slower, like a user
-        ```
 
         Parameters
         ----------
@@ -11636,9 +11740,9 @@ class Page(AsyncContextManager):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = await webkit.launch()
             page = await browser.new_page()
@@ -11653,9 +11757,9 @@ class Page(AsyncContextManager):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = webkit.launch()
             page = browser.new_page()
@@ -12048,8 +12152,8 @@ class Page(AsyncContextManager):
             When to consider operation succeeded, defaults to `load`. Events can be either:
             - `'domcontentloaded'` - consider operation to be finished when the `DOMContentLoaded` event is fired.
             - `'load'` - consider operation to be finished when the `load` event is fired.
-            - `'networkidle'` - consider operation to be finished when there are no network connections for at least `500`
-              ms.
+            - `'networkidle'` - **DISCOURAGED** consider operation to be finished when there are no network connections for
+              at least `500` ms. Don't use this method for testing, rely on web assertions to assess readiness instead.
             - `'commit'` - consider operation to be finished when network response is received and the document started
               loading.
         timeout : Union[float, None]
@@ -12385,6 +12489,35 @@ class Page(AsyncContextManager):
 mapping.register(PageImpl, Page)
 
 
+class WebError(AsyncBase):
+    @property
+    def page(self) -> typing.Optional["Page"]:
+        """WebError.page
+
+        The page that produced this unhandled exception, if any.
+
+        Returns
+        -------
+        Union[Page, None]
+        """
+        return mapping.from_impl_nullable(self._impl_obj.page)
+
+    @property
+    def error(self) -> "Error":
+        """WebError.error
+
+        Unhandled error that was thrown.
+
+        Returns
+        -------
+        Error
+        """
+        return mapping.from_impl(self._impl_obj.error)
+
+
+mapping.register(WebErrorImpl, WebError)
+
+
 class BrowserContext(AsyncContextManager):
     @typing.overload
     def on(
@@ -12422,6 +12555,63 @@ class BrowserContext(AsyncContextManager):
     @typing.overload
     def on(
         self,
+        event: Literal["console"],
+        f: typing.Callable[
+            ["ConsoleMessage"], "typing.Union[typing.Awaitable[None], None]"
+        ],
+    ) -> None:
+        """
+        Emitted when JavaScript within the page calls one of console API methods, e.g. `console.log` or `console.dir`. Also
+        emitted if the page throws an error or a warning.
+
+        The arguments passed into `console.log` and the page are available on the `ConsoleMessage` event handler argument.
+
+        **Usage**
+
+        ```py
+        async def print_args(msg):
+            values = []
+            for arg in msg.args:
+                values.append(await arg.json_value())
+            print(values)
+
+        context.on(\"console\", print_args)
+        await page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
+        ```
+
+        ```py
+        def print_args(msg):
+            for arg in msg.args:
+                print(arg.json_value())
+
+        context.on(\"console\", print_args)
+        page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
+        ```"""
+
+    @typing.overload
+    def on(
+        self,
+        event: Literal["dialog"],
+        f: typing.Callable[["Dialog"], "typing.Union[typing.Awaitable[None], None]"],
+    ) -> None:
+        """
+        Emitted when a JavaScript dialog appears, such as `alert`, `prompt`, `confirm` or `beforeunload`. Listener **must**
+        either `dialog.accept()` or `dialog.dismiss()` the dialog - otherwise the page will
+        [freeze](https://developer.mozilla.org/en-US/docs/Web/JavaScript/EventLoop#never_blocking) waiting for the dialog,
+        and actions like click will never finish.
+
+        **Usage**
+
+        ```python
+        context.on(\"dialog\", lambda dialog: dialog.accept())
+        ```
+
+        **NOTE** When no `page.on('dialog')` or `browser_context.on('dialog')` listeners are present, all dialogs are
+        automatically dismissed."""
+
+    @typing.overload
+    def on(
+        self,
         event: Literal["page"],
         f: typing.Callable[["Page"], "typing.Union[typing.Awaitable[None], None]"],
     ) -> None:
@@ -12450,6 +12640,16 @@ class BrowserContext(AsyncContextManager):
 
         **NOTE** Use `page.wait_for_load_state()` to wait until the page gets to a particular state (you should not
         need it in most cases)."""
+
+    @typing.overload
+    def on(
+        self,
+        event: Literal["weberror"],
+        f: typing.Callable[["WebError"], "typing.Union[typing.Awaitable[None], None]"],
+    ) -> None:
+        """
+        Emitted when exception is unhandled in any of the pages in this context. To listen for errors from a particular
+        page, use `page.on('page_error')` instead."""
 
     @typing.overload
     def on(
@@ -12554,6 +12754,63 @@ class BrowserContext(AsyncContextManager):
     @typing.overload
     def once(
         self,
+        event: Literal["console"],
+        f: typing.Callable[
+            ["ConsoleMessage"], "typing.Union[typing.Awaitable[None], None]"
+        ],
+    ) -> None:
+        """
+        Emitted when JavaScript within the page calls one of console API methods, e.g. `console.log` or `console.dir`. Also
+        emitted if the page throws an error or a warning.
+
+        The arguments passed into `console.log` and the page are available on the `ConsoleMessage` event handler argument.
+
+        **Usage**
+
+        ```py
+        async def print_args(msg):
+            values = []
+            for arg in msg.args:
+                values.append(await arg.json_value())
+            print(values)
+
+        context.on(\"console\", print_args)
+        await page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
+        ```
+
+        ```py
+        def print_args(msg):
+            for arg in msg.args:
+                print(arg.json_value())
+
+        context.on(\"console\", print_args)
+        page.evaluate(\"console.log('hello', 5, { foo: 'bar' })\")
+        ```"""
+
+    @typing.overload
+    def once(
+        self,
+        event: Literal["dialog"],
+        f: typing.Callable[["Dialog"], "typing.Union[typing.Awaitable[None], None]"],
+    ) -> None:
+        """
+        Emitted when a JavaScript dialog appears, such as `alert`, `prompt`, `confirm` or `beforeunload`. Listener **must**
+        either `dialog.accept()` or `dialog.dismiss()` the dialog - otherwise the page will
+        [freeze](https://developer.mozilla.org/en-US/docs/Web/JavaScript/EventLoop#never_blocking) waiting for the dialog,
+        and actions like click will never finish.
+
+        **Usage**
+
+        ```python
+        context.on(\"dialog\", lambda dialog: dialog.accept())
+        ```
+
+        **NOTE** When no `page.on('dialog')` or `browser_context.on('dialog')` listeners are present, all dialogs are
+        automatically dismissed."""
+
+    @typing.overload
+    def once(
+        self,
         event: Literal["page"],
         f: typing.Callable[["Page"], "typing.Union[typing.Awaitable[None], None]"],
     ) -> None:
@@ -12582,6 +12839,16 @@ class BrowserContext(AsyncContextManager):
 
         **NOTE** Use `page.wait_for_load_state()` to wait until the page gets to a particular state (you should not
         need it in most cases)."""
+
+    @typing.overload
+    def once(
+        self,
+        event: Literal["weberror"],
+        f: typing.Callable[["WebError"], "typing.Union[typing.Awaitable[None], None]"],
+    ) -> None:
+        """
+        Emitted when exception is unhandled in any of the pages in this context. To listen for errors from a particular
+        page, use `page.on('page_error')` instead."""
 
     @typing.overload
     def once(
@@ -12820,6 +13087,9 @@ class BrowserContext(AsyncContextManager):
         Parameters
         ----------
         cookies : List[{name: str, value: str, url: Union[str, None], domain: Union[str, None], path: Union[str, None], expires: Union[float, None], httpOnly: Union[bool, None], secure: Union[bool, None], sameSite: Union["Lax", "None", "Strict", None]}]
+            Adds cookies to the browser context.
+
+            For the cookie to apply to all subdomains as well, prefix domain with a dot, like this: ".example.com".
         """
 
         return mapping.from_maybe_impl(
@@ -13029,9 +13299,9 @@ class BrowserContext(AsyncContextManager):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = await webkit.launch(headless=false)
             context = await browser.new_context()
@@ -13055,9 +13325,9 @@ class BrowserContext(AsyncContextManager):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = webkit.launch(headless=false)
             context = browser.new_context()
@@ -13142,14 +13412,14 @@ class BrowserContext(AsyncContextManager):
         ```py
         import asyncio
         import hashlib
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        def sha256(text):
+        def sha256(text: str) -> str:
             m = hashlib.sha256()
             m.update(bytes(text, \"utf8\"))
             return m.hexdigest()
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = await webkit.launch(headless=False)
             context = await browser.new_context()
@@ -13176,12 +13446,12 @@ class BrowserContext(AsyncContextManager):
         import hashlib
         from playwright.sync_api import sync_playwright
 
-        def sha256(text):
+        def sha256(text: str) -> str:
             m = hashlib.sha256()
             m.update(bytes(text, \"utf8\"))
             return m.hexdigest()
 
-        def run(playwright):
+        def run(playwright: Playwright):
             webkit = playwright.webkit
             browser = webkit.launch(headless=False)
             context = browser.new_context()
@@ -13281,18 +13551,18 @@ class BrowserContext(AsyncContextManager):
 
         ```py
         def handle_route(route):
-          if (\"my-string\" in route.request.post_data)
+          if (\"my-string\" in route.request.post_data):
             route.fulfill(body=\"mocked-data\")
-          else
+          else:
             route.continue_()
         await context.route(\"/api/**\", handle_route)
         ```
 
         ```py
         def handle_route(route):
-          if (\"my-string\" in route.request.post_data)
+          if (\"my-string\" in route.request.post_data):
             route.fulfill(body=\"mocked-data\")
-          else
+          else:
             route.continue_()
         context.route(\"/api/**\", handle_route)
         ```
@@ -13361,13 +13631,13 @@ class BrowserContext(AsyncContextManager):
         url: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
         not_found: typing.Optional[Literal["abort", "fallback"]] = None,
         update: typing.Optional[bool] = None,
-        content: typing.Optional[Literal["attach", "embed", "omit"]] = None,
-        mode: typing.Optional[Literal["full", "minimal"]] = None
+        update_content: typing.Optional[Literal["attach", "embed"]] = None,
+        update_mode: typing.Optional[Literal["full", "minimal"]] = None
     ) -> None:
         """BrowserContext.route_from_har
 
         If specified the network requests that are made in the context will be served from the HAR file. Read more about
-        [Replaying from HAR](https://playwright.dev/python/docs/network#replaying-from-har).
+        [Replaying from HAR](https://playwright.dev/python/docs/mock#replaying-from-har).
 
         Playwright will not serve requests intercepted by Service Worker from the HAR file. See
         [this](https://github.com/microsoft/playwright/issues/1090) issue. We recommend disabling Service Workers when
@@ -13389,11 +13659,10 @@ class BrowserContext(AsyncContextManager):
         update : Union[bool, None]
             If specified, updates the given HAR with the actual network information instead of serving from file. The file is
             written to disk when `browser_context.close()` is called.
-        content : Union["attach", "embed", "omit", None]
-            Optional setting to control resource content management. If `omit` is specified, content is not persisted. If
-            `attach` is specified, resources are persisted as separate files or entries in the ZIP archive. If `embed` is
-            specified, content is stored inline the HAR file
-        mode : Union["full", "minimal", None]
+        update_content : Union["attach", "embed", None]
+            Optional setting to control resource content management. If `attach` is specified, resources are persisted as
+            separate files or entries in the ZIP archive. If `embed` is specified, content is stored inline the HAR file.
+        update_mode : Union["full", "minimal", None]
             When set to `minimal`, only record information necessary for routing from HAR. This omits sizes, timing, page,
             cookies, security and other types of HAR information that are not used when replaying from HAR. Defaults to
             `minimal`.
@@ -13405,8 +13674,8 @@ class BrowserContext(AsyncContextManager):
                 url=url,
                 not_found=not_found,
                 update=update,
-                content=content,
-                mode=mode,
+                update_content=update_content,
+                update_mode=update_mode,
             )
         )
 
@@ -13521,6 +13790,38 @@ class BrowserContext(AsyncContextManager):
             await self._impl_obj.wait_for_event(
                 event=event, predicate=self._wrap_handler(predicate), timeout=timeout
             )
+        )
+
+    def expect_console_message(
+        self,
+        predicate: typing.Optional[typing.Callable[["ConsoleMessage"], bool]] = None,
+        *,
+        timeout: typing.Optional[float] = None
+    ) -> AsyncEventContextManager["ConsoleMessage"]:
+        """BrowserContext.expect_console_message
+
+        Performs action and waits for a `ConsoleMessage` to be logged by in the pages in the context. If predicate is
+        provided, it passes `ConsoleMessage` value into the `predicate` function and waits for `predicate(message)` to
+        return a truthy value. Will throw an error if the page is closed before the `browser_context.on('console')` event
+        is fired.
+
+        Parameters
+        ----------
+        predicate : Union[Callable[[ConsoleMessage], bool], None]
+            Receives the `ConsoleMessage` object and resolves to truthy value when the waiting should resolve.
+        timeout : Union[float, None]
+            Maximum time to wait for in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The
+            default value can be changed by using the `browser_context.set_default_timeout()`.
+
+        Returns
+        -------
+        EventContextManager[ConsoleMessage]
+        """
+
+        return AsyncEventContextManager(
+            self._impl_obj.expect_console_message(
+                predicate=self._wrap_handler(predicate), timeout=timeout
+            ).future
         )
 
     def expect_page(
@@ -13791,7 +14092,7 @@ class Browser(AsyncContextManager):
         ----------
         viewport : Union[{width: int, height: int}, None]
             Sets a consistent viewport for each page. Defaults to an 1280x720 viewport. `no_viewport` disables the fixed
-            viewport.
+            viewport. Learn more about [viewport emulation](../emulation.md#viewport).
         screen : Union[{width: int, height: int}, None]
             Emulates consistent window screen size available inside web page via `window.screen`. Is only used when the
             `viewport` is set.
@@ -13800,35 +14101,42 @@ class Browser(AsyncContextManager):
         ignore_https_errors : Union[bool, None]
             Whether to ignore HTTPS errors when sending network requests. Defaults to `false`.
         java_script_enabled : Union[bool, None]
-            Whether or not to enable JavaScript in the context. Defaults to `true`.
+            Whether or not to enable JavaScript in the context. Defaults to `true`. Learn more about
+            [disabling JavaScript](../emulation.md#javascript-enabled).
         bypass_csp : Union[bool, None]
-            Toggles bypassing page's Content-Security-Policy.
+            Toggles bypassing page's Content-Security-Policy. Defaults to `false`.
         user_agent : Union[str, None]
             Specific user agent to use in this context.
         locale : Union[str, None]
             Specify user locale, for example `en-GB`, `de-DE`, etc. Locale will affect `navigator.language` value,
-            `Accept-Language` request header value as well as number and date formatting rules.
+            `Accept-Language` request header value as well as number and date formatting rules. Defaults to the system default
+            locale. Learn more about emulation in our [emulation guide](../emulation.md#locale--timezone).
         timezone_id : Union[str, None]
             Changes the timezone of the context. See
             [ICU's metaZones.txt](https://cs.chromium.org/chromium/src/third_party/icu/source/data/misc/metaZones.txt?rcl=faee8bc70570192d82d2978a71e2a615788597d1)
-            for a list of supported timezone IDs.
+            for a list of supported timezone IDs. Defaults to the system timezone.
         geolocation : Union[{latitude: float, longitude: float, accuracy: Union[float, None]}, None]
         permissions : Union[List[str], None]
             A list of permissions to grant to all pages in this context. See `browser_context.grant_permissions()` for
-            more details.
+            more details. Defaults to none.
         extra_http_headers : Union[Dict[str, str], None]
-            An object containing additional HTTP headers to be sent with every request.
+            An object containing additional HTTP headers to be sent with every request. Defaults to none.
         offline : Union[bool, None]
-            Whether to emulate network being offline. Defaults to `false`.
-        http_credentials : Union[{username: str, password: str}, None]
-            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication).
+            Whether to emulate network being offline. Defaults to `false`. Learn more about
+            [network emulation](../emulation.md#offline).
+        http_credentials : Union[{username: str, password: str, origin: Union[str, None]}, None]
+            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication). If no
+            origin is specified, the username and password are sent to any servers upon unauthorized responses.
         device_scale_factor : Union[float, None]
-            Specify device scale factor (can be thought of as dpr). Defaults to `1`.
+            Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
+            [emulating devices with device scale factor](../emulation.md#devices).
         is_mobile : Union[bool, None]
-            Whether the `meta viewport` tag is taken into account and touch events are enabled. Defaults to `false`. Not
-            supported in Firefox.
+            Whether the `meta viewport` tag is taken into account and touch events are enabled. isMobile is a part of device,
+            so you don't actually need to set it manually. Defaults to `false` and is not supported in Firefox. Learn more
+            about [mobile emulation](../emulation.md#ismobile).
         has_touch : Union[bool, None]
-            Specifies if viewport supports touch events. Defaults to false.
+            Specifies if viewport supports touch events. Defaults to false. Learn more about
+            [mobile emulation](../emulation.md#devices).
         color_scheme : Union["dark", "light", "no-preference", "null", None]
             Emulates `'prefers-colors-scheme'` media feature, supported values are `'light'`, `'dark'`, `'no-preference'`. See
             `page.emulate_media()` for more details. Passing `'null'` resets emulation to system defaults. Defaults to
@@ -13844,7 +14152,7 @@ class Browser(AsyncContextManager):
         accept_downloads : Union[bool, None]
             Whether to automatically download all the attachments. Defaults to `true` where all the downloads are accepted.
         proxy : Union[{server: str, bypass: Union[str, None], username: Union[str, None], password: Union[str, None]}, None]
-            Network proxy settings to use with this context.
+            Network proxy settings to use with this context. Defaults to none.
 
             **NOTE** For Chromium on Windows the browser needs to be launched with the global proxy for this option to work. If
             all contexts override the proxy, global proxy will be never used and can be any string, for example `launch({
@@ -13863,14 +14171,15 @@ class Browser(AsyncContextManager):
             800x800. If `viewport` is not configured explicitly the video size defaults to 800x450. Actual picture of each page
             will be scaled down if necessary to fit the specified size.
         storage_state : Union[pathlib.Path, str, {cookies: List[{name: str, value: str, domain: str, path: str, expires: float, httpOnly: bool, secure: bool, sameSite: Union["Lax", "None", "Strict"]}], origins: List[{origin: str, localStorage: List[{name: str, value: str}]}]}, None]
+            Learn more about [storage state and auth](../auth.md).
+
             Populates context with given storage state. This option can be used to initialize context with logged-in
-            information obtained via `browser_context.storage_state()`. Either a path to the file with saved storage, or
-            an object with the following fields:
+            information obtained via `browser_context.storage_state()`.
         base_url : Union[str, None]
             When using `page.goto()`, `page.route()`, `page.wait_for_url()`,
             `page.expect_request()`, or `page.expect_response()` it takes the base URL in consideration by
             using the [`URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor for building the
-            corresponding URL. Examples:
+            corresponding URL. Unset by default. Examples:
             - baseURL: `http://localhost:3000` and navigating to `/bar.html` results in `http://localhost:3000/bar.html`
             - baseURL: `http://localhost:3000/foo/` and navigating to `./bar.html` results in
               `http://localhost:3000/foo/bar.html`
@@ -13879,8 +14188,8 @@ class Browser(AsyncContextManager):
         strict_selectors : Union[bool, None]
             If set to true, enables strict selectors mode for this context. In the strict selectors mode all operations on
             selectors that imply single target DOM element will throw when more than one element matches the selector. This
-            option does not affect any Locator APIs (Locators are always strict). See `Locator` to learn more about the strict
-            mode.
+            option does not affect any Locator APIs (Locators are always strict). Defaults to `false`. See `Locator` to learn
+            more about the strict mode.
         service_workers : Union["allow", "block", None]
             Whether to allow sites to register Service workers. Defaults to `'allow'`.
             - `'allow'`: [Service Workers](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API) can be
@@ -13997,7 +14306,7 @@ class Browser(AsyncContextManager):
         ----------
         viewport : Union[{width: int, height: int}, None]
             Sets a consistent viewport for each page. Defaults to an 1280x720 viewport. `no_viewport` disables the fixed
-            viewport.
+            viewport. Learn more about [viewport emulation](../emulation.md#viewport).
         screen : Union[{width: int, height: int}, None]
             Emulates consistent window screen size available inside web page via `window.screen`. Is only used when the
             `viewport` is set.
@@ -14006,35 +14315,42 @@ class Browser(AsyncContextManager):
         ignore_https_errors : Union[bool, None]
             Whether to ignore HTTPS errors when sending network requests. Defaults to `false`.
         java_script_enabled : Union[bool, None]
-            Whether or not to enable JavaScript in the context. Defaults to `true`.
+            Whether or not to enable JavaScript in the context. Defaults to `true`. Learn more about
+            [disabling JavaScript](../emulation.md#javascript-enabled).
         bypass_csp : Union[bool, None]
-            Toggles bypassing page's Content-Security-Policy.
+            Toggles bypassing page's Content-Security-Policy. Defaults to `false`.
         user_agent : Union[str, None]
             Specific user agent to use in this context.
         locale : Union[str, None]
             Specify user locale, for example `en-GB`, `de-DE`, etc. Locale will affect `navigator.language` value,
-            `Accept-Language` request header value as well as number and date formatting rules.
+            `Accept-Language` request header value as well as number and date formatting rules. Defaults to the system default
+            locale. Learn more about emulation in our [emulation guide](../emulation.md#locale--timezone).
         timezone_id : Union[str, None]
             Changes the timezone of the context. See
             [ICU's metaZones.txt](https://cs.chromium.org/chromium/src/third_party/icu/source/data/misc/metaZones.txt?rcl=faee8bc70570192d82d2978a71e2a615788597d1)
-            for a list of supported timezone IDs.
+            for a list of supported timezone IDs. Defaults to the system timezone.
         geolocation : Union[{latitude: float, longitude: float, accuracy: Union[float, None]}, None]
         permissions : Union[List[str], None]
             A list of permissions to grant to all pages in this context. See `browser_context.grant_permissions()` for
-            more details.
+            more details. Defaults to none.
         extra_http_headers : Union[Dict[str, str], None]
-            An object containing additional HTTP headers to be sent with every request.
+            An object containing additional HTTP headers to be sent with every request. Defaults to none.
         offline : Union[bool, None]
-            Whether to emulate network being offline. Defaults to `false`.
-        http_credentials : Union[{username: str, password: str}, None]
-            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication).
+            Whether to emulate network being offline. Defaults to `false`. Learn more about
+            [network emulation](../emulation.md#offline).
+        http_credentials : Union[{username: str, password: str, origin: Union[str, None]}, None]
+            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication). If no
+            origin is specified, the username and password are sent to any servers upon unauthorized responses.
         device_scale_factor : Union[float, None]
-            Specify device scale factor (can be thought of as dpr). Defaults to `1`.
+            Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
+            [emulating devices with device scale factor](../emulation.md#devices).
         is_mobile : Union[bool, None]
-            Whether the `meta viewport` tag is taken into account and touch events are enabled. Defaults to `false`. Not
-            supported in Firefox.
+            Whether the `meta viewport` tag is taken into account and touch events are enabled. isMobile is a part of device,
+            so you don't actually need to set it manually. Defaults to `false` and is not supported in Firefox. Learn more
+            about [mobile emulation](../emulation.md#ismobile).
         has_touch : Union[bool, None]
-            Specifies if viewport supports touch events. Defaults to false.
+            Specifies if viewport supports touch events. Defaults to false. Learn more about
+            [mobile emulation](../emulation.md#devices).
         color_scheme : Union["dark", "light", "no-preference", "null", None]
             Emulates `'prefers-colors-scheme'` media feature, supported values are `'light'`, `'dark'`, `'no-preference'`. See
             `page.emulate_media()` for more details. Passing `'null'` resets emulation to system defaults. Defaults to
@@ -14050,7 +14366,7 @@ class Browser(AsyncContextManager):
         accept_downloads : Union[bool, None]
             Whether to automatically download all the attachments. Defaults to `true` where all the downloads are accepted.
         proxy : Union[{server: str, bypass: Union[str, None], username: Union[str, None], password: Union[str, None]}, None]
-            Network proxy settings to use with this context.
+            Network proxy settings to use with this context. Defaults to none.
 
             **NOTE** For Chromium on Windows the browser needs to be launched with the global proxy for this option to work. If
             all contexts override the proxy, global proxy will be never used and can be any string, for example `launch({
@@ -14069,14 +14385,15 @@ class Browser(AsyncContextManager):
             800x800. If `viewport` is not configured explicitly the video size defaults to 800x450. Actual picture of each page
             will be scaled down if necessary to fit the specified size.
         storage_state : Union[pathlib.Path, str, {cookies: List[{name: str, value: str, domain: str, path: str, expires: float, httpOnly: bool, secure: bool, sameSite: Union["Lax", "None", "Strict"]}], origins: List[{origin: str, localStorage: List[{name: str, value: str}]}]}, None]
+            Learn more about [storage state and auth](../auth.md).
+
             Populates context with given storage state. This option can be used to initialize context with logged-in
-            information obtained via `browser_context.storage_state()`. Either a path to the file with saved storage, or
-            an object with the following fields:
+            information obtained via `browser_context.storage_state()`.
         base_url : Union[str, None]
             When using `page.goto()`, `page.route()`, `page.wait_for_url()`,
             `page.expect_request()`, or `page.expect_response()` it takes the base URL in consideration by
             using the [`URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor for building the
-            corresponding URL. Examples:
+            corresponding URL. Unset by default. Examples:
             - baseURL: `http://localhost:3000` and navigating to `/bar.html` results in `http://localhost:3000/bar.html`
             - baseURL: `http://localhost:3000/foo/` and navigating to `./bar.html` results in
               `http://localhost:3000/foo/bar.html`
@@ -14085,8 +14402,8 @@ class Browser(AsyncContextManager):
         strict_selectors : Union[bool, None]
             If set to true, enables strict selectors mode for this context. In the strict selectors mode all operations on
             selectors that imply single target DOM element will throw when more than one element matches the selector. This
-            option does not affect any Locator APIs (Locators are always strict). See `Locator` to learn more about the strict
-            mode.
+            option does not affect any Locator APIs (Locators are always strict). Defaults to `false`. See `Locator` to learn
+            more about the strict mode.
         service_workers : Union["allow", "block", None]
             Whether to allow sites to register Service workers. Defaults to `'allow'`.
             - `'allow'`: [Service Workers](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API) can be
@@ -14534,7 +14851,7 @@ class BrowserType(AsyncBase):
             on.
         viewport : Union[{width: int, height: int}, None]
             Sets a consistent viewport for each page. Defaults to an 1280x720 viewport. `no_viewport` disables the fixed
-            viewport.
+            viewport. Learn more about [viewport emulation](../emulation.md#viewport).
         screen : Union[{width: int, height: int}, None]
             Emulates consistent window screen size available inside web page via `window.screen`. Is only used when the
             `viewport` is set.
@@ -14543,35 +14860,42 @@ class BrowserType(AsyncBase):
         ignore_https_errors : Union[bool, None]
             Whether to ignore HTTPS errors when sending network requests. Defaults to `false`.
         java_script_enabled : Union[bool, None]
-            Whether or not to enable JavaScript in the context. Defaults to `true`.
+            Whether or not to enable JavaScript in the context. Defaults to `true`. Learn more about
+            [disabling JavaScript](../emulation.md#javascript-enabled).
         bypass_csp : Union[bool, None]
-            Toggles bypassing page's Content-Security-Policy.
+            Toggles bypassing page's Content-Security-Policy. Defaults to `false`.
         user_agent : Union[str, None]
             Specific user agent to use in this context.
         locale : Union[str, None]
             Specify user locale, for example `en-GB`, `de-DE`, etc. Locale will affect `navigator.language` value,
-            `Accept-Language` request header value as well as number and date formatting rules.
+            `Accept-Language` request header value as well as number and date formatting rules. Defaults to the system default
+            locale. Learn more about emulation in our [emulation guide](../emulation.md#locale--timezone).
         timezone_id : Union[str, None]
             Changes the timezone of the context. See
             [ICU's metaZones.txt](https://cs.chromium.org/chromium/src/third_party/icu/source/data/misc/metaZones.txt?rcl=faee8bc70570192d82d2978a71e2a615788597d1)
-            for a list of supported timezone IDs.
+            for a list of supported timezone IDs. Defaults to the system timezone.
         geolocation : Union[{latitude: float, longitude: float, accuracy: Union[float, None]}, None]
         permissions : Union[List[str], None]
             A list of permissions to grant to all pages in this context. See `browser_context.grant_permissions()` for
-            more details.
+            more details. Defaults to none.
         extra_http_headers : Union[Dict[str, str], None]
-            An object containing additional HTTP headers to be sent with every request.
+            An object containing additional HTTP headers to be sent with every request. Defaults to none.
         offline : Union[bool, None]
-            Whether to emulate network being offline. Defaults to `false`.
-        http_credentials : Union[{username: str, password: str}, None]
-            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication).
+            Whether to emulate network being offline. Defaults to `false`. Learn more about
+            [network emulation](../emulation.md#offline).
+        http_credentials : Union[{username: str, password: str, origin: Union[str, None]}, None]
+            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication). If no
+            origin is specified, the username and password are sent to any servers upon unauthorized responses.
         device_scale_factor : Union[float, None]
-            Specify device scale factor (can be thought of as dpr). Defaults to `1`.
+            Specify device scale factor (can be thought of as dpr). Defaults to `1`. Learn more about
+            [emulating devices with device scale factor](../emulation.md#devices).
         is_mobile : Union[bool, None]
-            Whether the `meta viewport` tag is taken into account and touch events are enabled. Defaults to `false`. Not
-            supported in Firefox.
+            Whether the `meta viewport` tag is taken into account and touch events are enabled. isMobile is a part of device,
+            so you don't actually need to set it manually. Defaults to `false` and is not supported in Firefox. Learn more
+            about [mobile emulation](../emulation.md#ismobile).
         has_touch : Union[bool, None]
-            Specifies if viewport supports touch events. Defaults to false.
+            Specifies if viewport supports touch events. Defaults to false. Learn more about
+            [mobile emulation](../emulation.md#devices).
         color_scheme : Union["dark", "light", "no-preference", "null", None]
             Emulates `'prefers-colors-scheme'` media feature, supported values are `'light'`, `'dark'`, `'no-preference'`. See
             `page.emulate_media()` for more details. Passing `'null'` resets emulation to system defaults. Defaults to
@@ -14607,7 +14931,7 @@ class BrowserType(AsyncBase):
             When using `page.goto()`, `page.route()`, `page.wait_for_url()`,
             `page.expect_request()`, or `page.expect_response()` it takes the base URL in consideration by
             using the [`URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor for building the
-            corresponding URL. Examples:
+            corresponding URL. Unset by default. Examples:
             - baseURL: `http://localhost:3000` and navigating to `/bar.html` results in `http://localhost:3000/bar.html`
             - baseURL: `http://localhost:3000/foo/` and navigating to `./bar.html` results in
               `http://localhost:3000/foo/bar.html`
@@ -14616,8 +14940,8 @@ class BrowserType(AsyncBase):
         strict_selectors : Union[bool, None]
             If set to true, enables strict selectors mode for this context. In the strict selectors mode all operations on
             selectors that imply single target DOM element will throw when more than one element matches the selector. This
-            option does not affect any Locator APIs (Locators are always strict). See `Locator` to learn more about the strict
-            mode.
+            option does not affect any Locator APIs (Locators are always strict). Defaults to `false`. See `Locator` to learn
+            more about the strict mode.
         service_workers : Union["allow", "block", None]
             Whether to allow sites to register Service workers. Defaults to `'allow'`.
             - `'allow'`: [Service Workers](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API) can be
@@ -14754,7 +15078,8 @@ class BrowserType(AsyncBase):
         *,
         timeout: typing.Optional[float] = None,
         slow_mo: typing.Optional[float] = None,
-        headers: typing.Optional[typing.Dict[str, str]] = None
+        headers: typing.Optional[typing.Dict[str, str]] = None,
+        expose_network: typing.Optional[str] = None
     ) -> "Browser":
         """BrowserType.connect
 
@@ -14773,6 +15098,20 @@ class BrowserType(AsyncBase):
             on. Defaults to 0.
         headers : Union[Dict[str, str], None]
             Additional HTTP headers to be sent with web socket connect request. Optional.
+        expose_network : Union[str, None]
+            This option exposes network available on the connecting client to the browser being connected to. Consists of a
+            list of rules separated by comma.
+
+            Available rules:
+            1. Hostname pattern, for example: `example.com`, `*.org:99`, `x.*.y.com`, `*foo.org`.
+            1. IP literal, for example: `127.0.0.1`, `0.0.0.0:99`, `[::1]`, `[0:0::1]:99`.
+            1. `<loopback>` that matches local loopback interfaces: `localhost`, `*.localhost`, `127.0.0.1`, `[::1]`.
+
+            Some common examples:
+            1. `"*"` to expose all network.
+            1. `"<loopback>"` to expose localhost network.
+            1. `"*.test.internal-domain,*.staging.internal-domain,<loopback>"` to expose test/staging deployments and
+               localhost.
 
         Returns
         -------
@@ -14785,6 +15124,7 @@ class BrowserType(AsyncBase):
                 timeout=timeout,
                 slow_mo=slow_mo,
                 headers=mapping.to_impl(headers),
+                expose_network=expose_network,
             )
         )
 
@@ -14801,9 +15141,9 @@ class Playwright(AsyncBase):
 
         ```py
         import asyncio
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright, Playwright
 
-        async def run(playwright):
+        async def run(playwright: Playwright):
             webkit = playwright.webkit
             iphone = playwright.devices[\"iPhone 6\"]
             browser = await webkit.launch()
@@ -14820,9 +15160,9 @@ class Playwright(AsyncBase):
         ```
 
         ```py
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, Playwright
 
-        def run(playwright):
+        def run(playwright: Playwright):
             webkit = playwright.webkit
             iphone = playwright.devices[\"iPhone 6\"]
             browser = webkit.launch()
@@ -14906,28 +15246,28 @@ class Playwright(AsyncBase):
     def __getitem__(self, value: str) -> "BrowserType":
         return mapping.from_impl(self._impl_obj.__getitem__(value=value))
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """Playwright.stop
 
         Terminates this instance of Playwright in case it was created bypassing the Python context manager. This is useful
         in REPL applications.
 
         ```py
-        >>> from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright
 
-        >>> playwright = sync_playwright().start()
+        playwright = sync_playwright().start()
 
-        >>> browser = playwright.chromium.launch()
-        >>> page = browser.new_page()
-        >>> page.goto(\"http://whatsmyuseragent.org/\")
-        >>> page.screenshot(path=\"example.png\")
-        >>> browser.close()
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.goto(\"https://playwright.dev/\")
+        page.screenshot(path=\"example.png\")
+        browser.close()
 
-        >>> playwright.stop()
+        playwright.stop()
         ```
         """
 
-        return mapping.from_maybe_impl(self._impl_obj.stop())
+        return mapping.from_maybe_impl(await self._impl_obj.stop())
 
 
 mapping.register(PlaywrightImpl, Playwright)
@@ -14990,7 +15330,9 @@ class Tracing(AsyncBase):
             )
         )
 
-    async def start_chunk(self, *, title: typing.Optional[str] = None) -> None:
+    async def start_chunk(
+        self, *, title: typing.Optional[str] = None, name: typing.Optional[str] = None
+    ) -> None:
         """Tracing.start_chunk
 
         Start a new trace chunk. If you'd like to record multiple traces on the same `BrowserContext`, use
@@ -15035,9 +15377,14 @@ class Tracing(AsyncBase):
         ----------
         title : Union[str, None]
             Trace name to be shown in the Trace Viewer.
+        name : Union[str, None]
+            If specified, the trace is going to be saved into the file with the given name inside the `tracesDir` folder
+            specified in `browser_type.launch()`.
         """
 
-        return mapping.from_maybe_impl(await self._impl_obj.start_chunk(title=title))
+        return mapping.from_maybe_impl(
+            await self._impl_obj.start_chunk(title=title, name=name)
+        )
 
     async def stop_chunk(
         self, *, path: typing.Optional[typing.Union[str, pathlib.Path]] = None
@@ -15107,11 +15454,11 @@ class Locator(AsyncBase):
         **Usage**
 
         ```py
-        banana = await page.get_by_role(\"listitem\").last()
+        banana = await page.get_by_role(\"listitem\").last
         ```
 
         ```py
-        banana = page.get_by_role(\"listitem\").last()
+        banana = page.get_by_role(\"listitem\").last
         ```
 
         Returns
@@ -15660,7 +16007,7 @@ class Locator(AsyncBase):
         [control](https://developer.mozilla.org/en-US/docs/Web/API/HTMLLabelElement/control), the control will be filled
         instead.
 
-        To send fine-grained keyboard events, use `locator.type()`.
+        To send fine-grained keyboard events, use `locator.press_sequentially()`.
 
         Parameters
         ----------
@@ -15738,7 +16085,9 @@ class Locator(AsyncBase):
         selector_or_locator: typing.Union[str, "Locator"],
         *,
         has_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
-        has: typing.Optional["Locator"] = None
+        has_not_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
+        has: typing.Optional["Locator"] = None,
+        has_not: typing.Optional["Locator"] = None
     ) -> "Locator":
         """Locator.locator
 
@@ -15755,9 +16104,17 @@ class Locator(AsyncBase):
             Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
             passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
             `<article><div>Playwright</div></article>`.
+        has_not_text : Union[Pattern[str], str, None]
+            Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
+            When passed a [string], matching is case-insensitive and searches for a substring.
         has : Union[Locator, None]
             Matches elements containing an element that matches an inner locator. Inner locator is queried against the outer
             one. For example, `article` that has `text=Playwright` matches `<article><div>Playwright</div></article>`.
+
+            Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
+        has_not : Union[Locator, None]
+            Matches elements that do not contain an element that matches an inner locator. Inner locator is queried against the
+            outer one. For example, `article` that does not have `div` matches `<article><span>Playwright</span></article>`.
 
             Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
 
@@ -15770,7 +16127,9 @@ class Locator(AsyncBase):
             self._impl_obj.locator(
                 selector_or_locator=selector_or_locator,
                 has_text=has_text,
+                has_not_text=has_not_text,
                 has=has._impl_obj if has else None,
+                has_not=has_not._impl_obj if has_not else None,
             )
         )
 
@@ -15823,22 +16182,26 @@ class Locator(AsyncBase):
     ) -> "Locator":
         """Locator.get_by_label
 
-        Allows locating input elements by the text of the associated label.
+        Allows locating input elements by the text of the associated `<label>` or `aria-labelledby` element, or by the
+        `aria-label` attribute.
 
         **Usage**
 
-        For example, this method will find the input by label text \"Password\" in the following DOM:
+        For example, this method will find inputs by label \"Username\" and \"Password\" in the following DOM:
 
         ```html
+        <input aria-label=\"Username\">
         <label for=\"password-input\">Password:</label>
         <input id=\"password-input\">
         ```
 
         ```py
+        await page.get_by_label(\"Username\").fill(\"john\")
         await page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
         ```py
+        page.get_by_label(\"Username\").fill(\"john\")
         page.get_by_label(\"Password\").fill(\"secret\")
         ```
 
@@ -16369,7 +16732,9 @@ class Locator(AsyncBase):
         self,
         *,
         has_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
-        has: typing.Optional["Locator"] = None
+        has_not_text: typing.Optional[typing.Union[str, typing.Pattern[str]]] = None,
+        has: typing.Optional["Locator"] = None,
+        has_not: typing.Optional["Locator"] = None
     ) -> "Locator":
         """Locator.filter
 
@@ -16381,19 +16746,18 @@ class Locator(AsyncBase):
         ```py
         row_locator = page.locator(\"tr\")
         # ...
-        await row_locator
-            .filter(has_text=\"text in column 1\")
-            .filter(has=page.get_by_role(\"button\", name=\"column 2 button\"))
-            .screenshot()
+        await row_locator.filter(has_text=\"text in column 1\").filter(
+            has=page.get_by_role(\"button\", name=\"column 2 button\")
+        ).screenshot()
+
         ```
 
         ```py
         row_locator = page.locator(\"tr\")
         # ...
-        row_locator
-            .filter(has_text=\"text in column 1\")
-            .filter(has=page.get_by_role(\"button\", name=\"column 2 button\"))
-            .screenshot()
+        row_locator.filter(has_text=\"text in column 1\").filter(
+            has=page.get_by_role(\"button\", name=\"column 2 button\")
+        ).screenshot()
         ```
 
         Parameters
@@ -16402,9 +16766,17 @@ class Locator(AsyncBase):
             Matches elements containing specified text somewhere inside, possibly in a child or a descendant element. When
             passed a [string], matching is case-insensitive and searches for a substring. For example, `"Playwright"` matches
             `<article><div>Playwright</div></article>`.
+        has_not_text : Union[Pattern[str], str, None]
+            Matches elements that do not contain specified text somewhere inside, possibly in a child or a descendant element.
+            When passed a [string], matching is case-insensitive and searches for a substring.
         has : Union[Locator, None]
             Matches elements containing an element that matches an inner locator. Inner locator is queried against the outer
             one. For example, `article` that has `text=Playwright` matches `<article><div>Playwright</div></article>`.
+
+            Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
+        has_not : Union[Locator, None]
+            Matches elements that do not contain an element that matches an inner locator. Inner locator is queried against the
+            outer one. For example, `article` that does not have `div` matches `<article><span>Playwright</span></article>`.
 
             Note that outer and inner locators must belong to the same frame. Inner locator must not contain `FrameLocator`s.
 
@@ -16414,8 +16786,82 @@ class Locator(AsyncBase):
         """
 
         return mapping.from_impl(
-            self._impl_obj.filter(has_text=has_text, has=has._impl_obj if has else None)
+            self._impl_obj.filter(
+                has_text=has_text,
+                has_not_text=has_not_text,
+                has=has._impl_obj if has else None,
+                has_not=has_not._impl_obj if has_not else None,
+            )
         )
+
+    def or_(self, locator: "Locator") -> "Locator":
+        """Locator.or_
+
+        Creates a locator that matches either of the two locators.
+
+        **Usage**
+
+        Consider a scenario where you'd like to click on a \"New email\" button, but sometimes a security settings dialog
+        shows up instead. In this case, you can wait for either a \"New email\" button, or a dialog and act accordingly.
+
+        ```py
+        new_email = page.get_by_role(\"button\", name=\"New\")
+        dialog = page.get_by_text(\"Confirm security settings\")
+        await expect(new_email.or_(dialog)).to_be_visible()
+        if (await dialog.is_visible()):
+          await page.get_by_role(\"button\", name=\"Dismiss\").click()
+        await new_email.click()
+        ```
+
+        ```py
+        new_email = page.get_by_role(\"button\", name=\"New\")
+        dialog = page.get_by_text(\"Confirm security settings\")
+        expect(new_email.or_(dialog)).to_be_visible()
+        if (dialog.is_visible()):
+          page.get_by_role(\"button\", name=\"Dismiss\").click()
+        new_email.click()
+        ```
+
+        Parameters
+        ----------
+        locator : Locator
+            Alternative locator to match.
+
+        Returns
+        -------
+        Locator
+        """
+
+        return mapping.from_impl(self._impl_obj.or_(locator=locator._impl_obj))
+
+    def and_(self, locator: "Locator") -> "Locator":
+        """Locator.and_
+
+        Creates a locator that matches both this locator and the argument locator.
+
+        **Usage**
+
+        The following example finds a button with a specific title.
+
+        ```py
+        button = page.get_by_role(\"button\").and_(page.getByTitle(\"Subscribe\"))
+        ```
+
+        ```py
+        button = page.get_by_role(\"button\").and_(page.getByTitle(\"Subscribe\"))
+        ```
+
+        Parameters
+        ----------
+        locator : Locator
+            Additional locator to match.
+
+        Returns
+        -------
+        Locator
+        """
+
+        return mapping.from_impl(self._impl_obj.and_(locator=locator._impl_obj))
 
     async def focus(self, *, timeout: typing.Optional[float] = None) -> None:
         """Locator.focus
@@ -16448,11 +16894,13 @@ class Locator(AsyncBase):
     async def all(self) -> typing.List["Locator"]:
         """Locator.all
 
-        When locator points to a list of elements, returns array of locators, pointing to respective elements.
+        When the locator points to a list of elements, this returns an array of locators, pointing to their respective
+        elements.
 
-        Note that `locator.all()` does not wait for elements to match the locator, and instead immediately returns
-        whatever is present in the page. To avoid flakiness when elements are loaded dynamically, wait for the loading to
-        finish before calling `locator.all()`.
+        **NOTE** `locator.all()` does not wait for elements to match the locator, and instead immediately returns
+        whatever is present in the page.  When the list of elements changes dynamically, `locator.all()` will
+        produce unpredictable and flaky results.  When the list of elements is stable, but loaded dynamically, wait for the
+        full list to finish loading before calling `locator.all()`.
 
         **Usage**
 
@@ -16477,6 +16925,9 @@ class Locator(AsyncBase):
         """Locator.count
 
         Returns the number of elements matching the locator.
+
+        **NOTE** If you need to assert the number of elements on the page, prefer `locator_assertions.to_have_count()`
+        to avoid flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
 
         **Usage**
 
@@ -16585,6 +17036,9 @@ class Locator(AsyncBase):
         """Locator.get_attribute
 
         Returns the matching element's attribute value.
+
+        **NOTE** If you need to assert an element's attribute, prefer `locator_assertions.to_have_attribute()` to
+        avoid flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
 
         Parameters
         ----------
@@ -16698,6 +17152,9 @@ class Locator(AsyncBase):
 
         Returns the [`element.innerText`](https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/innerText).
 
+        **NOTE** If you need to assert text on the page, prefer `locator_assertions.to_have_text()` with
+        `useInnerText` option to avoid flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
+
         Parameters
         ----------
         timeout : Union[float, None]
@@ -16715,6 +17172,9 @@ class Locator(AsyncBase):
         """Locator.input_value
 
         Returns the value for the matching `<input>` or `<textarea>` or `<select>` element.
+
+        **NOTE** If you need to assert input value, prefer `locator_assertions.to_have_value()` to avoid flakiness.
+        See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
 
         **Usage**
 
@@ -16753,6 +17213,9 @@ class Locator(AsyncBase):
 
         Returns whether the element is checked. Throws if the element is not a checkbox or radio input.
 
+        **NOTE** If you need to assert that checkbox is checked, prefer `locator_assertions.to_be_checked()` to avoid
+        flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
+
         **Usage**
 
         ```py
@@ -16780,6 +17243,9 @@ class Locator(AsyncBase):
         """Locator.is_disabled
 
         Returns whether the element is disabled, the opposite of [enabled](https://playwright.dev/python/docs/actionability#enabled).
+
+        **NOTE** If you need to assert that an element is disabled, prefer `locator_assertions.to_be_disabled()` to
+        avoid flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
 
         **Usage**
 
@@ -16811,6 +17277,9 @@ class Locator(AsyncBase):
 
         Returns whether the element is [editable](https://playwright.dev/python/docs/actionability#editable).
 
+        **NOTE** If you need to assert that an element is editable, prefer `locator_assertions.to_be_editable()` to
+        avoid flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
+
         **Usage**
 
         ```py
@@ -16841,6 +17310,9 @@ class Locator(AsyncBase):
 
         Returns whether the element is [enabled](https://playwright.dev/python/docs/actionability#enabled).
 
+        **NOTE** If you need to assert that an element is enabled, prefer `locator_assertions.to_be_enabled()` to
+        avoid flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
+
         **Usage**
 
         ```py
@@ -16869,6 +17341,9 @@ class Locator(AsyncBase):
 
         Returns whether the element is hidden, the opposite of [visible](https://playwright.dev/python/docs/actionability#visible).
 
+        **NOTE** If you need to assert that element is hidden, prefer `locator_assertions.to_be_hidden()` to avoid
+        flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
+
         **Usage**
 
         ```py
@@ -16882,6 +17357,7 @@ class Locator(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
+            Deprecated: This option is ignored. `locator.is_hidden()` does not wait for the element to become hidden and returns immediately.
 
         Returns
         -------
@@ -16894,6 +17370,9 @@ class Locator(AsyncBase):
         """Locator.is_visible
 
         Returns whether the element is [visible](https://playwright.dev/python/docs/actionability#visible).
+
+        **NOTE** If you need to assert that element is visible, prefer `locator_assertions.to_be_visible()` to avoid
+        flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
 
         **Usage**
 
@@ -16908,6 +17387,7 @@ class Locator(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
+            Deprecated: This option is ignored. `locator.is_visible()` does not wait for the element to become visible and returns immediately.
 
         Returns
         -------
@@ -16993,7 +17473,8 @@ class Locator(AsyncBase):
         animations: typing.Optional[Literal["allow", "disabled"]] = None,
         caret: typing.Optional[Literal["hide", "initial"]] = None,
         scale: typing.Optional[Literal["css", "device"]] = None,
-        mask: typing.Optional[typing.List["Locator"]] = None
+        mask: typing.Optional[typing.List["Locator"]] = None,
+        mask_color: typing.Optional[str] = None
     ) -> bytes:
         """Locator.screenshot
 
@@ -17064,7 +17545,10 @@ class Locator(AsyncBase):
             Defaults to `"device"`.
         mask : Union[List[Locator], None]
             Specify locators that should be masked when the screenshot is taken. Masked elements will be overlaid with a pink
-            box `#FF00FF` that completely covers its bounding box.
+            box `#FF00FF` (customized by `maskColor`) that completely covers its bounding box.
+        mask_color : Union[str, None]
+            Specify the color of the overlay box for masked elements, in
+            [CSS color format](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value). Default color is pink `#FF00FF`.
 
         Returns
         -------
@@ -17082,6 +17566,7 @@ class Locator(AsyncBase):
                 caret=caret,
                 scale=scale,
                 mask=mapping.to_impl(mask),
+                mask_color=mask_color,
             )
         )
 
@@ -17385,6 +17870,9 @@ class Locator(AsyncBase):
 
         Returns the [`node.textContent`](https://developer.mozilla.org/en-US/docs/Web/API/Node/textContent).
 
+        **NOTE** If you need to assert text on the page, prefer `locator_assertions.to_have_text()` to avoid
+        flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
+
         Parameters
         ----------
         timeout : Union[float, None]
@@ -17417,30 +17905,6 @@ class Locator(AsyncBase):
 
         **Usage**
 
-        ```py
-        await element.type(\"hello\") # types instantly
-        await element.type(\"world\", delay=100) # types slower, like a user
-        ```
-
-        ```py
-        element.type(\"hello\") # types instantly
-        element.type(\"world\", delay=100) # types slower, like a user
-        ```
-
-        An example of typing into a text field and then submitting the form:
-
-        ```py
-        element = page.get_by_label(\"Password\")
-        await element.type(\"my password\")
-        await element.press(\"Enter\")
-        ```
-
-        ```py
-        element = page.get_by_label(\"Password\")
-        element.type(\"my password\")
-        element.press(\"Enter\")
-        ```
-
         Parameters
         ----------
         text : str
@@ -17458,6 +17922,71 @@ class Locator(AsyncBase):
 
         return mapping.from_maybe_impl(
             await self._impl_obj.type(
+                text=text, delay=delay, timeout=timeout, noWaitAfter=no_wait_after
+            )
+        )
+
+    async def press_sequentially(
+        self,
+        text: str,
+        *,
+        delay: typing.Optional[float] = None,
+        timeout: typing.Optional[float] = None,
+        no_wait_after: typing.Optional[bool] = None
+    ) -> None:
+        """Locator.press_sequentially
+
+        **NOTE** In most cases, you should use `locator.fill()` instead. You only need to press keys one by one if
+        there is special keyboard handling on the page.
+
+        Focuses the element, and then sends a `keydown`, `keypress`/`input`, and `keyup` event for each character in the
+        text.
+
+        To press a special key, like `Control` or `ArrowDown`, use `locator.press()`.
+
+        **Usage**
+
+        ```py
+        await locator.press_sequentially(\"hello\") # types instantly
+        await locator.press_sequentially(\"world\", delay=100) # types slower, like a user
+        ```
+
+        ```py
+        locator.press_sequentially(\"hello\") # types instantly
+        locator.press_sequentially(\"world\", delay=100) # types slower, like a user
+        ```
+
+        An example of typing into a text field and then submitting the form:
+
+        ```py
+        locator = page.get_by_label(\"Password\")
+        await locator.press_sequentially(\"my password\")
+        await locator.press(\"Enter\")
+        ```
+
+        ```py
+        locator = page.get_by_label(\"Password\")
+        locator.press_sequentially(\"my password\")
+        locator.press(\"Enter\")
+        ```
+
+        Parameters
+        ----------
+        text : str
+            String of characters to sequentially press into a focused element.
+        delay : Union[float, None]
+            Time to wait between key presses in milliseconds. Defaults to 0.
+        timeout : Union[float, None]
+            Maximum time in milliseconds. Defaults to `30000` (30 seconds). Pass `0` to disable timeout. The default value can
+            be changed by using the `browser_context.set_default_timeout()` or `page.set_default_timeout()` methods.
+        no_wait_after : Union[bool, None]
+            Actions that initiate navigations are waiting for these navigations to happen and for pages to start loading. You
+            can opt out of waiting via setting this flag. You would only need this option in the exceptional cases such as
+            navigating to inaccessible pages. Defaults to `false`.
+        """
+
+        return mapping.from_maybe_impl(
+            await self._impl_obj.press_sequentially(
                 text=text, delay=delay, timeout=timeout, noWaitAfter=no_wait_after
             )
         )
@@ -17535,6 +18064,9 @@ class Locator(AsyncBase):
 
         Returns an array of `node.innerText` values for all matching nodes.
 
+        **NOTE** If you need to assert text on the page, prefer `locator_assertions.to_have_text()` with
+        `useInnerText` option to avoid flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
+
         **Usage**
 
         ```py
@@ -17556,6 +18088,9 @@ class Locator(AsyncBase):
         """Locator.all_text_contents
 
         Returns an array of `node.textContent` values for all matching nodes.
+
+        **NOTE** If you need to assert text on the page, prefer `locator_assertions.to_have_text()` to avoid
+        flakiness. See [assertions guide](https://playwright.dev/python/docs/test-assertions) for more details.
 
         **Usage**
 
@@ -18523,9 +19058,10 @@ class APIRequest(AsyncBase):
             - baseURL: `http://localhost:3000/foo` (without trailing slash) and navigating to `./bar.html` results in
               `http://localhost:3000/bar.html`
         extra_http_headers : Union[Dict[str, str], None]
-            An object containing additional HTTP headers to be sent with every request.
-        http_credentials : Union[{username: str, password: str}, None]
-            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication).
+            An object containing additional HTTP headers to be sent with every request. Defaults to none.
+        http_credentials : Union[{username: str, password: str, origin: Union[str, None]}, None]
+            Credentials for [HTTP authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication). If no
+            origin is specified, the username and password are sent to any servers upon unauthorized responses.
         ignore_https_errors : Union[bool, None]
             Whether to ignore HTTPS errors when sending network requests. Defaults to `false`.
         proxy : Union[{server: str, bypass: Union[str, None], username: Union[str, None], password: Union[str, None]}, None]
@@ -18597,7 +19133,7 @@ class PageAssertions(AsyncBase):
         title_or_reg_exp : Union[Pattern[str], str]
             Expected title or RegExp.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -18622,7 +19158,7 @@ class PageAssertions(AsyncBase):
         title_or_reg_exp : Union[Pattern[str], str]
             Expected title or RegExp.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -18665,7 +19201,7 @@ class PageAssertions(AsyncBase):
         url_or_reg_exp : Union[Pattern[str], str]
             Expected URL string or RegExp.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -18690,7 +19226,7 @@ class PageAssertions(AsyncBase):
         url_or_reg_exp : Union[Pattern[str], str]
             Expected URL string or RegExp.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -18801,7 +19337,7 @@ class LocatorAssertions(AsyncBase):
         use_inner_text : Union[bool, None]
             Whether to use `element.innerText` instead of `element.textContent` when retrieving DOM node text.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         ignore_case : Union[bool, None]
             Whether to perform case-insensitive match. `ignoreCase` option takes precedence over the corresponding regular
             expression flag if specified.
@@ -18842,7 +19378,7 @@ class LocatorAssertions(AsyncBase):
         use_inner_text : Union[bool, None]
             Whether to use `element.innerText` instead of `element.textContent` when retrieving DOM node text.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         ignore_case : Union[bool, None]
             Whether to perform case-insensitive match. `ignoreCase` option takes precedence over the corresponding regular
             expression flag if specified.
@@ -18892,7 +19428,7 @@ class LocatorAssertions(AsyncBase):
         value : Union[Pattern[str], str]
             Expected attribute value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -18920,7 +19456,7 @@ class LocatorAssertions(AsyncBase):
         value : Union[Pattern[str], str]
             Expected attribute value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -18990,7 +19526,7 @@ class LocatorAssertions(AsyncBase):
         expected : Union[List[Pattern[str]], List[Union[Pattern[str], str]], List[str], Pattern[str], str]
             Expected class or RegExp or a list of those.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19021,7 +19557,7 @@ class LocatorAssertions(AsyncBase):
         expected : Union[List[Pattern[str]], List[Union[Pattern[str], str]], List[str], Pattern[str], str]
             Expected class or RegExp or a list of those.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19059,7 +19595,7 @@ class LocatorAssertions(AsyncBase):
         count : int
             Expected count.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19079,7 +19615,7 @@ class LocatorAssertions(AsyncBase):
         count : int
             Expected count.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19121,7 +19657,7 @@ class LocatorAssertions(AsyncBase):
         value : Union[Pattern[str], str]
             CSS property value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19147,7 +19683,7 @@ class LocatorAssertions(AsyncBase):
         value : Union[Pattern[str], str]
             CSS property value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19188,7 +19724,7 @@ class LocatorAssertions(AsyncBase):
         id : Union[Pattern[str], str]
             Element id.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19211,7 +19747,7 @@ class LocatorAssertions(AsyncBase):
         id : Union[Pattern[str], str]
             Element id.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19250,7 +19786,7 @@ class LocatorAssertions(AsyncBase):
         value : Any
             Property value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19274,7 +19810,7 @@ class LocatorAssertions(AsyncBase):
         value : Any
             Property value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19318,7 +19854,7 @@ class LocatorAssertions(AsyncBase):
         value : Union[Pattern[str], str]
             Expected value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19341,7 +19877,7 @@ class LocatorAssertions(AsyncBase):
         value : Union[Pattern[str], str]
             Expected value.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19399,7 +19935,7 @@ class LocatorAssertions(AsyncBase):
         values : Union[List[Pattern[str]], List[Union[Pattern[str], str]], List[str]]
             Expected options currently selected.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19428,7 +19964,7 @@ class LocatorAssertions(AsyncBase):
         values : Union[List[Pattern[str]], List[Union[Pattern[str], str]], List[str]]
             Expected options currently selected.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19514,16 +20050,16 @@ class LocatorAssertions(AsyncBase):
         from playwright.sync_api import expect
 
         # ✓ Has the right items in the right order
-        await expect(page.locator(\"ul > li\")).to_have_text([\"Text 1\", \"Text 2\", \"Text 3\"])
+        expect(page.locator(\"ul > li\")).to_have_text([\"Text 1\", \"Text 2\", \"Text 3\"])
 
         # ✖ Wrong order
-        await expect(page.locator(\"ul > li\")).to_have_text([\"Text 3\", \"Text 2\", \"Text 1\"])
+        expect(page.locator(\"ul > li\")).to_have_text([\"Text 3\", \"Text 2\", \"Text 1\"])
 
         # ✖ Last item does not match
-        await expect(page.locator(\"ul > li\")).to_have_text([\"Text 1\", \"Text 2\", \"Text\"])
+        expect(page.locator(\"ul > li\")).to_have_text([\"Text 1\", \"Text 2\", \"Text\"])
 
         # ✖ Locator points to the outer list element, not to the list items
-        await expect(page.locator(\"ul\")).to_have_text([\"Text 1\", \"Text 2\", \"Text 3\"])
+        expect(page.locator(\"ul\")).to_have_text([\"Text 1\", \"Text 2\", \"Text 3\"])
         ```
 
         Parameters
@@ -19533,7 +20069,7 @@ class LocatorAssertions(AsyncBase):
         use_inner_text : Union[bool, None]
             Whether to use `element.innerText` instead of `element.textContent` when retrieving DOM node text.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         ignore_case : Union[bool, None]
             Whether to perform case-insensitive match. `ignoreCase` option takes precedence over the corresponding regular
             expression flag if specified.
@@ -19574,7 +20110,7 @@ class LocatorAssertions(AsyncBase):
         use_inner_text : Union[bool, None]
             Whether to use `element.innerText` instead of `element.textContent` when retrieving DOM node text.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         ignore_case : Union[bool, None]
             Whether to perform case-insensitive match. `ignoreCase` option takes precedence over the corresponding regular
             expression flag if specified.
@@ -19588,6 +20124,38 @@ class LocatorAssertions(AsyncBase):
                 timeout=timeout,
                 ignore_case=ignore_case,
             )
+        )
+
+    async def to_be_attached(
+        self,
+        *,
+        attached: typing.Optional[bool] = None,
+        timeout: typing.Optional[float] = None
+    ) -> None:
+        """LocatorAssertions.to_be_attached
+
+        Ensures that `Locator` points to an [attached](https://playwright.dev/python/docs/actionability#attached) DOM node.
+
+        **Usage**
+
+        ```py
+        await expect(page.get_by_text(\"Hidden text\")).to_be_attached()
+        ```
+
+        ```py
+        expect(page.get_by_text(\"Hidden text\")).to_be_attached()
+        ```
+
+        Parameters
+        ----------
+        attached : Union[bool, None]
+        timeout : Union[float, None]
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
+        """
+        __tracebackhide__ = True
+
+        return mapping.from_maybe_impl(
+            await self._impl_obj.to_be_attached(attached=attached, timeout=timeout)
         )
 
     async def to_be_checked(
@@ -19619,13 +20187,35 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         checked : Union[bool, None]
         """
         __tracebackhide__ = True
 
         return mapping.from_maybe_impl(
             await self._impl_obj.to_be_checked(timeout=timeout, checked=checked)
+        )
+
+    async def not_to_be_attached(
+        self,
+        *,
+        attached: typing.Optional[bool] = None,
+        timeout: typing.Optional[float] = None
+    ) -> None:
+        """LocatorAssertions.not_to_be_attached
+
+        The opposite of `locator_assertions.to_be_attached()`.
+
+        Parameters
+        ----------
+        attached : Union[bool, None]
+        timeout : Union[float, None]
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
+        """
+        __tracebackhide__ = True
+
+        return mapping.from_maybe_impl(
+            await self._impl_obj.not_to_be_attached(attached=attached, timeout=timeout)
         )
 
     async def not_to_be_checked(
@@ -19638,7 +20228,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19674,7 +20264,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19692,7 +20282,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19730,7 +20320,7 @@ class LocatorAssertions(AsyncBase):
         ----------
         editable : Union[bool, None]
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19752,7 +20342,7 @@ class LocatorAssertions(AsyncBase):
         ----------
         editable : Union[bool, None]
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19784,7 +20374,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19800,7 +20390,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19838,7 +20428,7 @@ class LocatorAssertions(AsyncBase):
         ----------
         enabled : Union[bool, None]
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19860,7 +20450,7 @@ class LocatorAssertions(AsyncBase):
         ----------
         enabled : Union[bool, None]
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19893,7 +20483,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19909,7 +20499,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19928,27 +20518,45 @@ class LocatorAssertions(AsyncBase):
         Ensures that `Locator` points to an [attached](https://playwright.dev/python/docs/actionability#attached) and
         [visible](https://playwright.dev/python/docs/actionability#visible) DOM node.
 
+        To check that at least one element from the list is visible, use `locator.first()`.
+
         **Usage**
 
         ```py
-        from playwright.async_api import expect
+        # A specific element is visible.
+        await expect(page.get_by_text(\"Welcome\")).to_be_visible()
 
-        locator = page.locator('.my-element')
-        await expect(locator).to_be_visible()
+        # At least one item in the list is visible.
+        await expect(page.get_by_test_id(\"todo-item\").first).to_be_visible()
+
+        # At least one of the two elements is visible, possibly both.
+        await expect(
+            page.get_by_role(\"button\", name=\"Sign in\")
+            .or_(page.get_by_role(\"button\", name=\"Sign up\"))
+            .first
+        ).to_be_visible()
         ```
 
         ```py
-        from playwright.sync_api import expect
+        # A specific element is visible.
+        expect(page.get_by_text(\"Welcome\")).to_be_visible()
 
-        locator = page.locator('.my-element')
-        expect(locator).to_be_visible()
+        # At least one item in the list is visible.
+        expect(page.get_by_test_id(\"todo-item\").first).to_be_visible()
+
+        # At least one of the two elements is visible, possibly both.
+        expect(
+            page.get_by_role(\"button\", name=\"Sign in\")
+            .or_(page.get_by_role(\"button\", name=\"Sign up\"))
+            .first
+        ).to_be_visible()
         ```
 
         Parameters
         ----------
         visible : Union[bool, None]
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -19970,7 +20578,7 @@ class LocatorAssertions(AsyncBase):
         ----------
         visible : Union[bool, None]
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -20002,7 +20610,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -20020,7 +20628,7 @@ class LocatorAssertions(AsyncBase):
         Parameters
         ----------
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -20071,7 +20679,7 @@ class LocatorAssertions(AsyncBase):
             The minimal ratio of the element to intersect viewport. If equals to `0`, then element should intersect viewport at
             any positive ratio. Defaults to `0`.
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 
@@ -20093,7 +20701,7 @@ class LocatorAssertions(AsyncBase):
         ----------
         ratio : Union[float, None]
         timeout : Union[float, None]
-            Time to retry the assertion for.
+            Time to retry the assertion for in milliseconds. Defaults to `5000`.
         """
         __tracebackhide__ = True
 

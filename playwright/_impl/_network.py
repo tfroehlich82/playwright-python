@@ -38,6 +38,7 @@ if sys.version_info >= (3, 8):  # pragma: no cover
     from typing import TypedDict
 else:  # pragma: no cover
     from typing_extensions import TypedDict
+
 from urllib import parse
 
 from playwright._impl._api_structures import (
@@ -51,6 +52,7 @@ from playwright._impl._api_structures import (
 from playwright._impl._api_types import Error
 from playwright._impl._connection import (
     ChannelOwner,
+    filter_none,
     from_channel,
     from_nullable_channel,
 )
@@ -59,6 +61,7 @@ from playwright._impl._helper import locals_to_params
 from playwright._impl._wait_helper import WaitHelper
 
 if TYPE_CHECKING:  # pragma: no cover
+    from playwright._impl._browser_context import BrowserContext
     from playwright._impl._fetch import APIResponse
     from playwright._impl._frame import Frame
     from playwright._impl._page import Page
@@ -189,7 +192,20 @@ class Request(ChannelOwner):
 
     @property
     def frame(self) -> "Frame":
-        return from_channel(self._initializer["frame"])
+        if not self._initializer.get("frame"):
+            raise Error("Service Worker requests do not have an associated frame.")
+        frame = cast("Frame", from_channel(self._initializer["frame"]))
+        if not frame._page:
+            raise Error(
+                "\n".join(
+                    [
+                        "Frame for this navigation request is not available, because the request",
+                        "was issued before the frame is created. You can check whether the request",
+                        "is a navigation request by calling isNavigationRequest() method.",
+                    ]
+                )
+            )
+        return frame
 
     def is_navigation_request(self) -> bool:
         return self._initializer["isNavigationRequest"]
@@ -242,9 +258,15 @@ class Request(ChannelOwner):
         return await self._all_headers_future
 
     def _target_closed_future(self) -> asyncio.Future:
-        if not hasattr(self.frame, "_page"):
+        frame = cast(
+            Optional["Frame"], from_nullable_channel(self._initializer.get("frame"))
+        )
+        if not frame:
             return asyncio.Future()
-        return self.frame._page._closed_or_crashed_future
+        page = frame._page
+        if not page:
+            return asyncio.Future()
+        return page._closed_or_crashed_future
 
 
 class Route(ChannelOwner):
@@ -253,6 +275,7 @@ class Route(ChannelOwner):
     ) -> None:
         super().__init__(parent, type, guid, initializer)
         self._handling_future: Optional[asyncio.Future["bool"]] = None
+        self._context: "BrowserContext" = cast("BrowserContext", None)
 
     def _start_handling(self) -> "asyncio.Future[bool]":
         self._handling_future = asyncio.Future()
@@ -278,7 +301,15 @@ class Route(ChannelOwner):
     async def abort(self, errorCode: str = None) -> None:
         self._check_not_handled()
         await self._race_with_page_close(
-            self._channel.send("abort", locals_to_params(locals()))
+            self._channel.send(
+                "abort",
+                filter_none(
+                    {
+                        "errorCode": errorCode,
+                        "requestUrl": self.request._initializer["url"],
+                    }
+                ),
+            )
         )
         self._report_handled(True)
 
@@ -344,6 +375,8 @@ class Route(ChannelOwner):
         if length and "content-length" not in headers:
             headers["content-length"] = str(length)
         params["headers"] = serialize_headers(headers)
+        params["requestUrl"] = self.request._initializer["url"]
+
         await self._race_with_page_close(self._channel.send("fulfill", params))
         self._report_handled(True)
 
@@ -354,10 +387,18 @@ class Route(ChannelOwner):
         headers: Dict[str, str] = None,
         postData: Union[Any, str, bytes] = None,
         maxRedirects: int = None,
+        timeout: float = None,
     ) -> "APIResponse":
-        page = self.request.frame._page
-        return await page.context.request._inner_fetch(
-            self.request, url, method, headers, postData, maxRedirects=maxRedirects
+        return await self._connection.wrap_api_call(
+            lambda: self._context.request._inner_fetch(
+                self.request,
+                url,
+                method,
+                headers,
+                postData,
+                maxRedirects=maxRedirects,
+                timeout=timeout,
+            )
         )
 
     async def fallback(
@@ -402,6 +443,8 @@ class Route(ChannelOwner):
 
                 if "headers" in params:
                     params["headers"] = serialize_headers(params["headers"])
+                params["requestUrl"] = self.request._initializer["url"]
+                params["isFallback"] = is_internal
                 await self._connection.wrap_api_call(
                     lambda: self._race_with_page_close(
                         self._channel.send(

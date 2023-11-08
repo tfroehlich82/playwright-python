@@ -48,7 +48,6 @@ from playwright._impl._connection import (
     from_nullable_channel,
 )
 from playwright._impl._console_message import ConsoleMessage
-from playwright._impl._dialog import Dialog
 from playwright._impl._download import Download
 from playwright._impl._element_handle import ElementHandle
 from playwright._impl._event_context_manager import EventContextManagerImpl
@@ -59,7 +58,6 @@ from playwright._impl._helper import (
     ColorScheme,
     DocumentLoadState,
     ForcedColors,
-    HarContentPolicy,
     HarMode,
     KeyboardModifier,
     MouseButton,
@@ -77,7 +75,6 @@ from playwright._impl._helper import (
     is_safe_close_error,
     locals_to_params,
     make_dirs_for_file,
-    parse_error,
     serialize_error,
 )
 from playwright._impl._input import Keyboard, Mouse, Touchscreen
@@ -160,14 +157,7 @@ class Page(ChannelOwner):
             lambda params: self._on_binding(from_channel(params["binding"])),
         )
         self._channel.on("close", lambda _: self._on_close())
-        self._channel.on(
-            "console",
-            lambda params: self.emit(
-                Page.Events.Console, from_channel(params["message"])
-            ),
-        )
         self._channel.on("crash", lambda _: self._on_crash())
-        self._channel.on("dialog", lambda params: self._on_dialog(params))
         self._channel.on("download", lambda params: self._on_download(params))
         self._channel.on(
             "fileChooser",
@@ -185,12 +175,6 @@ class Page(ChannelOwner):
         self._channel.on(
             "frameDetached",
             lambda params: self._on_frame_detached(from_channel(params["frame"])),
-        )
-        self._channel.on(
-            "pageError",
-            lambda params: self.emit(
-                Page.Events.PageError, parse_error(params["error"]["error"])
-            ),
         )
         self._channel.on(
             "route",
@@ -224,6 +208,8 @@ class Page(ChannelOwner):
 
         self._set_event_to_subscription_mapping(
             {
+                Page.Events.Console: "console",
+                Page.Events.Dialog: "dialog",
                 Page.Events.Request: "request",
                 Page.Events.Response: "response",
                 Page.Events.RequestFinished: "requestFinished",
@@ -246,6 +232,7 @@ class Page(ChannelOwner):
         self.emit(Page.Events.FrameDetached, frame)
 
     async def _on_route(self, route: Route) -> None:
+        route._context = self.context
         route_handlers = self._routes.copy()
         for route_handler in route_handlers:
             if not route_handler.matches(route.request.url):
@@ -286,16 +273,6 @@ class Page(ChannelOwner):
 
     def _on_crash(self) -> None:
         self.emit(Page.Events.Crash, self)
-
-    def _on_dialog(self, params: Any) -> None:
-        dialog = cast(Dialog, from_channel(params["dialog"]))
-        if self.listeners(Page.Events.Dialog):
-            self.emit(Page.Events.Dialog, dialog)
-        else:
-            if dialog.type == "beforeunload":
-                asyncio.create_task(dialog.accept())
-            else:
-                asyncio.create_task(dialog.dismiss())
 
     def _on_download(self, params: Any) -> None:
         url = params["url"]
@@ -340,13 +317,13 @@ class Page(ChannelOwner):
         return self._frames.copy()
 
     def set_default_navigation_timeout(self, timeout: float) -> None:
-        self._timeout_settings.set_navigation_timeout(timeout)
+        self._timeout_settings.set_default_navigation_timeout(timeout)
         self._channel.send_no_reply(
             "setDefaultNavigationTimeoutNoReply", dict(timeout=timeout)
         )
 
     def set_default_timeout(self, timeout: float) -> None:
-        self._timeout_settings.set_timeout(timeout)
+        self._timeout_settings.set_default_timeout(timeout)
         self._channel.send_no_reply("setDefaultTimeoutNoReply", dict(timeout=timeout))
 
     async def query_selector(
@@ -619,12 +596,16 @@ class Page(ChannelOwner):
         url: Union[Pattern[str], str] = None,
         not_found: RouteFromHarNotFoundPolicy = None,
         update: bool = None,
-        content: HarContentPolicy = None,
-        mode: HarMode = None,
+        update_content: Literal["attach", "embed"] = None,
+        update_mode: HarMode = None,
     ) -> None:
         if update:
             await self._browser_context._record_into_har(
-                har=har, page=self, url=url, content=content, mode=mode
+                har=har,
+                page=self,
+                url=url,
+                update_content=update_content,
+                update_mode=update_mode,
             )
             return
         router = await HarRouter.create(
@@ -654,6 +635,7 @@ class Page(ChannelOwner):
         caret: Literal["hide", "initial"] = None,
         scale: Literal["css", "device"] = None,
         mask: List["Locator"] = None,
+        mask_color: str = None,
     ) -> bytes:
         params = locals_to_params(locals())
         if "path" in params:
@@ -686,7 +668,7 @@ class Page(ChannelOwner):
             if self._owned_context:
                 await self._owned_context.close()
         except Exception as e:
-            if not is_safe_close_error(e):
+            if not is_safe_close_error(e) and not runBeforeUnload:
                 raise e
 
     def is_closed(self) -> bool:
@@ -751,9 +733,17 @@ class Page(ChannelOwner):
         self,
         selector: str,
         has_text: Union[str, Pattern[str]] = None,
+        has_not_text: Union[str, Pattern[str]] = None,
         has: "Locator" = None,
+        has_not: "Locator" = None,
     ) -> "Locator":
-        return self._main_frame.locator(selector, has_text=has_text, has=has)
+        return self._main_frame.locator(
+            selector,
+            has_text=has_text,
+            has_not_text=has_not_text,
+            has=has,
+            has_not=has_not,
+        )
 
     def get_by_alt_text(
         self, text: Union[str, Pattern[str]], exact: bool = None
@@ -962,13 +952,25 @@ class Page(ChannelOwner):
         return self.context.request
 
     async def pause(self) -> None:
-        await asyncio.wait(
-            [
-                asyncio.create_task(self._browser_context._pause()),
-                self._closed_or_crashed_future,
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
+        default_navigation_timeout = (
+            self._browser_context._timeout_settings.default_navigation_timeout()
         )
+        default_timeout = self._browser_context._timeout_settings.default_timeout()
+        self._browser_context.set_default_navigation_timeout(0)
+        self._browser_context.set_default_timeout(0)
+        try:
+            await asyncio.wait(
+                [
+                    asyncio.create_task(self._browser_context._channel.send("pause")),
+                    self._closed_or_crashed_future,
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            self._browser_context._set_default_navigation_timeout_impl(
+                default_navigation_timeout
+            )
+            self._browser_context._set_default_timeout_impl(default_timeout)
 
     async def pdf(
         self,

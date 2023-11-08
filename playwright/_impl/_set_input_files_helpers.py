@@ -1,3 +1,16 @@
+# Copyright (c) Microsoft Corporation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import base64
 import os
 import sys
@@ -33,26 +46,26 @@ async def convert_input_files(
 ) -> InputFilesList:
     file_list = files if isinstance(files, list) else [files]
 
-    has_large_buffer = any(
-        [
-            len(f.get("buffer", "")) > SIZE_LIMIT_IN_BYTES
-            for f in file_list
-            if not isinstance(f, (str, Path))
-        ]
+    total_buffer_size_exceeds_limit = (
+        sum(
+            [
+                len(f.get("buffer", ""))
+                for f in file_list
+                if not isinstance(f, (str, Path))
+            ]
+        )
+        > SIZE_LIMIT_IN_BYTES
     )
-    if has_large_buffer:
+    if total_buffer_size_exceeds_limit:
         raise Error(
             "Cannot set buffer larger than 50Mb, please write it to a file and pass its path instead."
         )
 
-    has_large_file = any(
-        [
-            os.stat(f).st_size > SIZE_LIMIT_IN_BYTES
-            for f in file_list
-            if isinstance(f, (str, Path))
-        ]
+    total_file_size_exceeds_limit = (
+        sum([os.stat(f).st_size for f in file_list if isinstance(f, (str, Path))])
+        > SIZE_LIMIT_IN_BYTES
     )
-    if has_large_file:
+    if total_file_size_exceeds_limit:
         if context._channel._connection.is_remote:
             streams = []
             for file in file_list:

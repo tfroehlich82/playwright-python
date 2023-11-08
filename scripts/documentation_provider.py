@@ -179,6 +179,10 @@ class DocumentationProvider:
                         print(
                             f"{indent}    {self.indent_paragraph(self.render_links(doc_value['comment']), f'{indent}    ')}"
                         )
+                    if doc_value.get("deprecated"):
+                        print(
+                            f"{indent}    Deprecated: {self.render_links(doc_value['deprecated'])}"
+                        )
                     self.compare_types(code_type, doc_value, f"{fqname}({name}=)", "in")
         if (
             signature
@@ -216,6 +220,8 @@ class DocumentationProvider:
                     func_arg = self.serialize_doc_type(event["type"], "")
                     if func_arg.startswith("{"):
                         func_arg = "typing.Dict"
+                    if "Union[" in func_arg:
+                        func_arg = func_arg.replace("Union[", "typing.Union[")
                     if len(events) > 1:
                         doc.append("    @typing.overload")
                     impl = ""
@@ -317,7 +323,7 @@ class DocumentationProvider:
         str_value = str(value)
         if isinstance(value, list):
             return f"[{', '.join(list(map(lambda a: self.serialize_python_type(a), value)))}]"
-        if str_value == "<class 'playwright._impl._types.Error'>":
+        if str_value == "<class 'playwright._impl._api_types.Error'>":
             return "Error"
         if str_value == "<class 'NoneType'>":
             return "None"
@@ -465,6 +471,8 @@ class DocumentationProvider:
         for [class_name, clazz] in self.classes.items():
             for [member_name, member] in clazz["members"].items():
                 if member.get("deprecated"):
+                    continue
+                if class_name in ["Error"]:
                     continue
                 entry = f"{class_name}.{member_name}"
                 if entry not in self.printed_entries:

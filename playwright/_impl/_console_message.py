@@ -12,18 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List
+from asyncio import AbstractEventLoop
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from playwright._impl._api_structures import SourceLocation
-from playwright._impl._connection import ChannelOwner, from_channel
+from playwright._impl._connection import from_channel, from_nullable_channel
 from playwright._impl._js_handle import JSHandle
 
+if TYPE_CHECKING:  # pragma: no cover
+    from playwright._impl._page import Page
 
-class ConsoleMessage(ChannelOwner):
+
+class ConsoleMessage:
     def __init__(
-        self, parent: ChannelOwner, type: str, guid: str, initializer: Dict
+        self, event: Dict, loop: AbstractEventLoop, dispatcher_fiber: Any
     ) -> None:
-        super().__init__(parent, type, guid, initializer)
+        self._event = event
+        self._loop = loop
+        self._dispatcher_fiber = dispatcher_fiber
+        self._page: Optional["Page"] = from_nullable_channel(event.get("page"))
 
     def __repr__(self) -> str:
         return f"<ConsoleMessage type={self.type} text={self.text}>"
@@ -33,16 +40,20 @@ class ConsoleMessage(ChannelOwner):
 
     @property
     def type(self) -> str:
-        return self._initializer["type"]
+        return self._event["type"]
 
     @property
     def text(self) -> str:
-        return self._initializer["text"]
+        return self._event["text"]
 
     @property
     def args(self) -> List[JSHandle]:
-        return list(map(from_channel, self._initializer["args"]))
+        return list(map(from_channel, self._event["args"]))
 
     @property
     def location(self) -> SourceLocation:
-        return self._initializer["location"]
+        return self._event["location"]
+
+    @property
+    def page(self) -> Optional["Page"]:
+        return self._page

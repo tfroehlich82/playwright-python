@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import sys
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from greenlet import greenlet
@@ -36,6 +35,7 @@ class PlaywrightContextManager:
         self._loop: asyncio.AbstractEventLoop
         self._own_loop = False
         self._watcher: Optional[AbstractChildWatcher] = None
+        self._exit_was_called = False
 
     def __enter__(self) -> SyncPlaywright:
         try:
@@ -48,20 +48,6 @@ class PlaywrightContextManager:
                 """It looks like you are using Playwright Sync API inside the asyncio loop.
 Please use the Async API instead."""
             )
-
-        # In Python 3.7, asyncio.Process.wait() hangs because it does not use ThreadedChildWatcher
-        # which is used in Python 3.8+. This is unix specific and also takes care about
-        # cleaning up zombie processes. See https://bugs.python.org/issue35621
-        if (
-            sys.version_info[0] == 3
-            and sys.version_info[1] == 7
-            and sys.platform != "win32"
-            and isinstance(asyncio.get_child_watcher(), asyncio.SafeChildWatcher)
-        ):
-            from ._py37ThreadedChildWatcher import ThreadedChildWatcher  # type: ignore
-
-            self._watcher = ThreadedChildWatcher()
-            asyncio.set_child_watcher(self._watcher)  # type: ignore
 
         # Create a new fiber for the protocol dispatcher. It will be pumping events
         # until the end of times. We will pass control to that fiber every time we
@@ -98,6 +84,9 @@ Please use the Async API instead."""
         return self.__enter__()
 
     def __exit__(self, *args: Any) -> None:
+        if self._exit_was_called:
+            return
+        self._exit_was_called = True
         self._connection.stop_sync()
         if self._watcher:
             self._watcher.close()

@@ -375,6 +375,12 @@ async def test_locators_should_type(page: Page):
     assert await page.eval_on_selector("input", "input => input.value") == "hello"
 
 
+async def test_locators_should_press_sequentially(page: Page):
+    await page.set_content("<input type='text' />")
+    await page.locator("input").press_sequentially("hello")
+    assert await page.eval_on_selector("input", "input => input.value") == "hello"
+
+
 async def test_locators_should_screenshot(
     page: Page, server: Server, assert_to_be_golden
 ):
@@ -826,6 +832,55 @@ async def test_locator_should_enforce_same_frame_for_has_locator(
     )
 
 
+async def test_locator_should_support_locator_or(page: Page, server: Server) -> None:
+    await page.set_content("<div>hello</div><span>world</span>")
+    await expect(page.locator("div").or_(page.locator("span"))).to_have_count(2)
+    await expect(page.locator("div").or_(page.locator("span"))).to_have_text(
+        ["hello", "world"]
+    )
+    await expect(
+        page.locator("span").or_(page.locator("article")).or_(page.locator("div"))
+    ).to_have_text(["hello", "world"])
+    await expect(page.locator("article").or_(page.locator("someting"))).to_have_count(0)
+    await expect(page.locator("article").or_(page.locator("div"))).to_have_text("hello")
+    await expect(page.locator("article").or_(page.locator("span"))).to_have_text(
+        "world"
+    )
+    await expect(page.locator("div").or_(page.locator("article"))).to_have_text("hello")
+    await expect(page.locator("span").or_(page.locator("article"))).to_have_text(
+        "world"
+    )
+
+
+async def test_locator_should_support_locator_locator_with_and_or(page: Page) -> None:
+    await page.set_content(
+        """
+        <div>one <span>two</span> <button>three</button> </div>
+        <span>four</span>
+        <button>five</button>
+        """
+    )
+
+    await expect(page.locator("div").locator(page.locator("button"))).to_have_text(
+        ["three"]
+    )
+    await expect(
+        page.locator("div").locator(page.locator("button").or_(page.locator("span")))
+    ).to_have_text(["two", "three"])
+    await expect(page.locator("button").or_(page.locator("span"))).to_have_text(
+        ["two", "three", "four", "five"]
+    )
+
+    await expect(
+        page.locator("div").locator(
+            page.locator("button").and_(page.get_by_role("button"))
+        )
+    ).to_have_text(["three"])
+    await expect(page.locator("button").and_(page.get_by_role("button"))).to_have_text(
+        ["three", "five"]
+    )
+
+
 async def test_locator_highlight_should_work(page: Page, server: Server) -> None:
     await page.goto(server.PREFIX + "/grid.html")
     await page.locator(".box").nth(3).highlight()
@@ -885,6 +940,73 @@ async def test_should_filter_by_regex_with_special_symbols(page):
     await expect(
         page.locator("div", has_text=re.compile(r'^first\/".*"second\\$', re.S | re.I))
     ).to_have_class("test")
+
+
+async def test_should_support_locator_filter(page: Page) -> None:
+    await page.set_content(
+        "<section><div><span>hello</span></div><div><span>world</span></div></section>"
+    )
+
+    await expect(page.locator("div").filter(has_text="hello")).to_have_count(1)
+    await expect(
+        page.locator("div", has_text="hello").filter(has_text="hello")
+    ).to_have_count(1)
+    await expect(
+        page.locator("div", has_text="hello").filter(has_text="world")
+    ).to_have_count(0)
+    await expect(
+        page.locator("section", has_text="hello").filter(has_text="world")
+    ).to_have_count(1)
+    await expect(
+        page.locator("div").filter(has_text="hello").locator("span")
+    ).to_have_count(1)
+    await expect(
+        page.locator("div").filter(has=page.locator("span", has_text="world"))
+    ).to_have_count(1)
+    await expect(page.locator("div").filter(has=page.locator("span"))).to_have_count(2)
+    await expect(
+        page.locator("div").filter(
+            has=page.locator("span"),
+            has_text="world",
+        )
+    ).to_have_count(1)
+    await expect(
+        page.locator("div").filter(has_not=page.locator("span", has_text="world"))
+    ).to_have_count(1)
+    await expect(
+        page.locator("div").filter(has_not=page.locator("section"))
+    ).to_have_count(2)
+    await expect(
+        page.locator("div").filter(has_not=page.locator("span"))
+    ).to_have_count(0)
+
+    await expect(page.locator("div").filter(has_not_text="hello")).to_have_count(1)
+    await expect(page.locator("div").filter(has_not_text="foo")).to_have_count(2)
+
+
+async def test_locators_should_support_locator_and(page: Page, server: Server):
+    await page.set_content(
+        """
+        <div data-testid=foo>hello</div><div data-testid=bar>world</div>
+        <span data-testid=foo>hello2</span><span data-testid=bar>world2</span>
+    """
+    )
+    await expect(page.locator("div").and_(page.locator("div"))).to_have_count(2)
+    await expect(page.locator("div").and_(page.get_by_test_id("foo"))).to_have_text(
+        ["hello"]
+    )
+    await expect(page.locator("div").and_(page.get_by_test_id("bar"))).to_have_text(
+        ["world"]
+    )
+    await expect(page.get_by_test_id("foo").and_(page.locator("div"))).to_have_text(
+        ["hello"]
+    )
+    await expect(page.get_by_test_id("bar").and_(page.locator("span"))).to_have_text(
+        ["world2"]
+    )
+    await expect(
+        page.locator("span").and_(page.get_by_test_id(re.compile("bar|foo")))
+    ).to_have_count(2)
 
 
 async def test_locators_has_does_not_encode_unicode(page: Page, server: Server):

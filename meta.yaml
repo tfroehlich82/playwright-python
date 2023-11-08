@@ -1,6 +1,6 @@
 package:
   name: playwright
-  version: "{{ environ.get('GIT_DESCRIBE_TAG') }}"
+  version: "{{ environ.get('GIT_DESCRIBE_TAG') | replace('v', '') }}"
 
 source:
   path: .
@@ -23,8 +23,8 @@ requirements:
     - setuptools_scm
   run:
     - python
-    - greenlet ==2.0.1
-    - pyee ==9.0.4
+    - greenlet ==3.0.0
+    - pyee ==11.0.1
     - typing_extensions # [py<39]
 test:
   requires:

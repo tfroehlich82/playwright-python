@@ -14,8 +14,31 @@
 
 import asyncio
 
-from playwright.async_api import Page, Route
+import pytest
+
+from playwright.async_api import Page, Route, expect
 from tests.server import Server
+
+
+async def test_should_support_timeout_option_in_route_fetch(server: Server, page: Page):
+    server.set_route(
+        "/slow",
+        lambda request: (
+            request.responseHeaders.addRawHeader("Content-Length", "4096"),
+            request.responseHeaders.addRawHeader("Content-Type", "text/html"),
+            request.write(b""),
+        ),
+    )
+
+    async def handle(route: Route):
+        with pytest.raises(Exception) as error:
+            await route.fetch(timeout=1000)
+        assert "Request timed out after 1000ms" in error.value.message
+
+    await page.route("**/*", lambda route: handle(route))
+    with pytest.raises(Exception) as error:
+        await page.goto(server.PREFIX + "/slow", timeout=2000)
+    assert "Timeout 2000ms exceeded" in error.value.message
 
 
 async def test_should_not_follow_redirects_when_max_redirects_is_set_to_0_in_route_fetch(
@@ -56,3 +79,18 @@ async def test_should_intercept_with_post_data_override(server: Server, page: Pa
     await page.goto(server.PREFIX + "/empty.html")
     request = await request_promise
     assert request.post_body.decode("utf-8") == '{"foo":"bar"}'
+
+
+async def test_should_fulfill_popup_main_request_using_alias(
+    page: Page, server: Server
+):
+    async def route_handler(route: Route):
+        response = await route.fetch()
+        await route.fulfill(response=response, body="hello")
+
+    await page.context.route("**/*", route_handler)
+    await page.set_content(f'<a target=_blank href="{server.EMPTY_PAGE}">click me</a>')
+    [popup, _] = await asyncio.gather(
+        page.wait_for_event("popup"), page.get_by_text("click me").click()
+    )
+    await expect(popup.locator("body")).to_have_text("hello")

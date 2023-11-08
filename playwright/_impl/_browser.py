@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import base64
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Dict, List, Pattern, Union, cast
+from typing import TYPE_CHECKING, Dict, List, Optional, Pattern, Union, cast
 
 from playwright._impl._api_structures import (
     Geolocation,
@@ -25,10 +24,12 @@ from playwright._impl._api_structures import (
     StorageState,
     ViewportSize,
 )
+from playwright._impl._artifact import Artifact
 from playwright._impl._browser_context import BrowserContext
 from playwright._impl._cdp_session import CDPSession
 from playwright._impl._connection import ChannelOwner, from_channel
 from playwright._impl._helper import (
+    BROWSER_CLOSED_ERROR,
     ColorScheme,
     ForcedColors,
     HarContentPolicy,
@@ -38,6 +39,7 @@ from playwright._impl._helper import (
     async_readfile,
     is_safe_close_error,
     locals_to_params,
+    make_dirs_for_file,
     prepare_record_har_options,
 )
 from playwright._impl._network import serialize_headers
@@ -60,6 +62,7 @@ class Browser(ChannelOwner):
         self._is_connected = True
         self._is_closed_or_closing = False
         self._should_close_connection_on_close = False
+        self._cr_tracing_path: Optional[str] = None
 
         self._contexts: List[BrowserContext] = []
         self._channel.on("close", lambda _: self._on_close())
@@ -125,10 +128,7 @@ class Browser(ChannelOwner):
 
         channel = await self._channel.send("newContext", params)
         context = cast(BrowserContext, from_channel(channel))
-        self._contexts.append(context)
-        context._browser = self
-        context._options = params
-        context._set_browser_type(self._browser_type)
+        self._browser_type._did_create_context(context, params, {})
         return context
 
     async def new_page(
@@ -169,16 +169,15 @@ class Browser(ChannelOwner):
         recordHarContent: HarContentPolicy = None,
     ) -> Page:
         params = locals_to_params(locals())
-        context = await self.new_context(**params)
-        page = await context.new_page()
-        page._owned_context = context
-        context._owner_page = page
-        return page
 
-    def _set_browser_type(self, browser_type: "BrowserType") -> None:
-        self._browser_type = browser_type
-        for context in self._contexts:
-            context._set_browser_type(browser_type)
+        async def inner() -> Page:
+            context = await self.new_context(**params)
+            page = await context.new_page()
+            page._owned_context = context
+            context._owner_page = page
+            return page
+
+        return await self._connection.wrap_api_call(inner)
 
     async def close(self) -> None:
         if self._is_closed_or_closing:
@@ -190,7 +189,7 @@ class Browser(ChannelOwner):
             if not is_safe_close_error(e):
                 raise e
         if self._should_close_connection_on_close:
-            await self._connection.stop_async()
+            await self._connection.stop_async(BROWSER_CLOSED_ERROR)
 
     @property
     def version(self) -> str:
@@ -210,12 +209,20 @@ class Browser(ChannelOwner):
         if page:
             params["page"] = page._channel
         if path:
+            self._cr_tracing_path = str(path)
             params["path"] = str(path)
         await self._channel.send("startTracing", params)
 
     async def stop_tracing(self) -> bytes:
-        encoded_binary = await self._channel.send("stopTracing")
-        return base64.b64decode(encoded_binary)
+        artifact = cast(Artifact, from_channel(await self._channel.send("stopTracing")))
+        buffer = await artifact.read_info_buffer()
+        await artifact.delete()
+        if self._cr_tracing_path:
+            make_dirs_for_file(self._cr_tracing_path)
+            with open(self._cr_tracing_path, "wb") as f:
+                f.write(buffer)
+            self._cr_tracing_path = None
+        return buffer
 
 
 async def prepare_browser_context_params(params: Dict) -> None:
@@ -230,7 +237,7 @@ async def prepare_browser_context_params(params: Dict) -> None:
         params["recordHar"] = prepare_record_har_options(params)
         del params["recordHarPath"]
     if "recordVideoDir" in params:
-        params["recordVideo"] = {"dir": str(params["recordVideoDir"])}
+        params["recordVideo"] = {"dir": Path(params["recordVideoDir"]).absolute()}
         if "recordVideoSize" in params:
             params["recordVideo"]["size"] = params["recordVideoSize"]
             del params["recordVideoSize"]
@@ -247,3 +254,5 @@ async def prepare_browser_context_params(params: Dict) -> None:
         params["reducedMotion"] = "no-override"
     if params.get("forcedColors", None) == "null":
         params["forcedColors"] = "no-override"
+    if "acceptDownloads" in params:
+        params["acceptDownloads"] = "accept" if params["acceptDownloads"] else "deny"

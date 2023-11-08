@@ -29,10 +29,12 @@ from playwright._impl._browser_context import BrowserContext
 from playwright._impl._connection import (
     ChannelOwner,
     Connection,
+    filter_none,
     from_channel,
     from_nullable_channel,
 )
 from playwright._impl._helper import (
+    BROWSER_CLOSED_ERROR,
     ColorScheme,
     Env,
     ForcedColors,
@@ -43,6 +45,7 @@ from playwright._impl._helper import (
     locals_to_params,
 )
 from playwright._impl._json_pipe import JsonPipeTransport
+from playwright._impl._network import serialize_headers
 from playwright._impl._wait_helper import throw_on_timeout
 
 if TYPE_CHECKING:
@@ -92,7 +95,7 @@ class BrowserType(ChannelOwner):
         browser = cast(
             Browser, from_channel(await self._channel.send("launch", params))
         )
-        browser._set_browser_type(self)
+        self._did_launch_browser(browser)
         return browser
 
     async def launch_persistent_context(
@@ -154,8 +157,7 @@ class BrowserType(ChannelOwner):
             BrowserContext,
             from_channel(await self._channel.send("launchPersistentContext", params)),
         )
-        context._options = params
-        context._set_browser_type(self)
+        self._did_create_context(context, params, params)
         return context
 
     async def connect_over_cdp(
@@ -166,17 +168,18 @@ class BrowserType(ChannelOwner):
         headers: Dict[str, str] = None,
     ) -> Browser:
         params = locals_to_params(locals())
+        if params.get("headers"):
+            params["headers"] = serialize_headers(params["headers"])
         response = await self._channel.send_return_as_dict("connectOverCDP", params)
         browser = cast(Browser, from_channel(response["browser"]))
+        self._did_launch_browser(browser)
 
         default_context = cast(
             Optional[BrowserContext],
             from_nullable_channel(response.get("defaultContext")),
         )
         if default_context:
-            browser._contexts.append(default_context)
-            default_context._browser = browser
-        browser._set_browser_type(self)
+            self._did_create_context(default_context, {}, {})
         return browser
 
     async def connect(
@@ -185,6 +188,7 @@ class BrowserType(ChannelOwner):
         timeout: float = None,
         slow_mo: float = None,
         headers: Dict[str, str] = None,
+        expose_network: str = None,
     ) -> Browser:
         if timeout is None:
             timeout = 30000
@@ -193,15 +197,20 @@ class BrowserType(ChannelOwner):
 
         headers = {**(headers if headers else {}), "x-playwright-browser": self.name}
         local_utils = self._connection.local_utils
-        pipe_channel = await local_utils._channel.send(
-            "connect",
-            {
-                "wsEndpoint": ws_endpoint,
-                "headers": headers,
-                "slowMo": slow_mo,
-                "timeout": timeout,
-            },
-        )
+        pipe_channel = (
+            await local_utils._channel.send_return_as_dict(
+                "connect",
+                filter_none(
+                    {
+                        "wsEndpoint": ws_endpoint,
+                        "headers": headers,
+                        "slowMo": slow_mo,
+                        "timeout": timeout,
+                        "exposeNetwork": expose_network,
+                    }
+                ),
+            )
+        )["pipe"]
         transport = JsonPipeTransport(self._connection._loop, pipe_channel)
 
         connection = Connection(
@@ -231,6 +240,7 @@ class BrowserType(ChannelOwner):
         pre_launched_browser = playwright._initializer.get("preLaunchedBrowser")
         assert pre_launched_browser
         browser = cast(Browser, from_channel(pre_launched_browser))
+        self._did_launch_browser(browser)
         browser._should_close_connection_on_close = True
 
         def handle_transport_close() -> None:
@@ -239,12 +249,19 @@ class BrowserType(ChannelOwner):
                     page._on_close()
                 context._on_close()
             browser._on_close()
-            connection.cleanup()
+            connection.cleanup(BROWSER_CLOSED_ERROR)
 
         transport.once("close", handle_transport_close)
 
-        browser._set_browser_type(self)
         return browser
+
+    def _did_create_context(
+        self, context: BrowserContext, context_options: Dict, browser_options: Dict
+    ) -> None:
+        context._set_options(context_options, browser_options)
+
+    def _did_launch_browser(self, browser: Browser) -> None:
+        browser._browser_type = self
 
 
 def normalize_launch_params(params: Dict) -> None:
@@ -261,3 +278,5 @@ def normalize_launch_params(params: Dict) -> None:
         params["executablePath"] = str(Path(params["executablePath"]))
     if "downloadsPath" in params:
         params["downloadsPath"] = str(Path(params["downloadsPath"]))
+    if "tracesDir" in params:
+        params["tracesDir"] = str(Path(params["tracesDir"]))

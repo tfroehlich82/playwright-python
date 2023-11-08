@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 #
-# Licensed under the Apache License, Version 2.0 (the "License")
+# Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import zipfile
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List
 
-from playwright.async_api import Browser, BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, BrowserType, Page
 from tests.server import Server
+from tests.utils import get_trace_actions, parse_trace
 
 
 async def test_browser_context_output_trace(
@@ -30,6 +30,13 @@ async def test_browser_context_output_trace(
     await page.goto(server.PREFIX + "/grid.html")
     await context.tracing.stop(path=tmp_path / "trace.zip")
     assert Path(tmp_path / "trace.zip").exists()
+
+
+async def test_start_stop(browser: Browser):
+    context = await browser.new_context()
+    await context.tracing.start()
+    await context.tracing.stop()
+    await context.close()
 
 
 async def test_browser_context_should_not_throw_when_stopping_without_start_but_not_exporting(
@@ -102,7 +109,7 @@ async def test_should_collect_trace_with_resources_but_no_js(
 
     (_, events) = parse_trace(trace_file_path)
     assert events[0]["type"] == "context-options"
-    assert get_actions(events) == [
+    assert get_trace_actions(events) == [
         "Page.goto",
         "Page.set_content",
         "Page.click",
@@ -157,7 +164,7 @@ async def test_should_collect_two_traces(
 
     (_, events) = parse_trace(tracing1_path)
     assert events[0]["type"] == "context-options"
-    assert get_actions(events) == [
+    assert get_trace_actions(events) == [
         "Page.goto",
         "Page.set_content",
         "Page.click",
@@ -165,7 +172,7 @@ async def test_should_collect_two_traces(
 
     (_, events) = parse_trace(tracing2_path)
     assert events[0]["type"] == "context-options"
-    assert get_actions(events) == ["Page.dblclick", "Page.close"]
+    assert get_trace_actions(events) == ["Page.dblclick", "Page.close"]
 
 
 async def test_should_not_throw_when_stopping_without_start_but_not_exporting(
@@ -192,7 +199,7 @@ async def test_should_work_with_playwright_context_managers(
 
     (_, events) = parse_trace(trace_file_path)
     assert events[0]["type"] == "context-options"
-    assert get_actions(events) == [
+    assert get_trace_actions(events) == [
         "Page.goto",
         "Page.set_content",
         "Page.expect_console_message",
@@ -216,33 +223,63 @@ async def test_should_display_wait_for_load_state_even_if_did_not_wait_for_it(
     await context.tracing.stop(path=trace_file_path)
 
     (_, events) = parse_trace(trace_file_path)
-    assert get_actions(events) == [
+    assert get_trace_actions(events) == [
         "Page.goto",
         "Page.wait_for_load_state",
         "Page.wait_for_load_state",
     ]
 
 
-def parse_trace(path: Path) -> Tuple[Dict[str, bytes], List[Any]]:
-    resources: Dict[str, bytes] = {}
-    with zipfile.ZipFile(path, "r") as zip:
-        for name in zip.namelist():
-            resources[name] = zip.read(name)
-    events: List[Any] = []
-    for name in ["trace.trace", "trace.network"]:
-        for line in resources[name].decode().splitlines():
-            events.append(json.loads(line))
-    return (resources, events)
+async def test_should_respect_traces_dir_and_name(
+    browser_type: BrowserType,
+    server: Server,
+    tmpdir: Path,
+    launch_arguments: Dict[str, str],
+) -> None:
+    traces_dir = tmpdir / "traces"
+    browser = await browser_type.launch(traces_dir=traces_dir, **launch_arguments)
+    context = await browser.new_context()
+    page = await context.new_page()
 
+    await context.tracing.start(name="name1", snapshots=True)
+    await page.goto(server.PREFIX + "/one-style.html")
+    await context.tracing.stop_chunk(path=tmpdir / "trace1.zip")
+    assert (traces_dir / "name1.trace").exists()
+    assert (traces_dir / "name1.network").exists()
 
-def get_actions(events: List[Any]) -> List[str]:
-    action_events = sorted(
-        list(
-            filter(
-                lambda e: e["type"] == "action",
-                events,
-            )
-        ),
-        key=lambda e: e["startTime"],
-    )
-    return [e["apiName"] for e in action_events]
+    await context.tracing.start_chunk(name="name2")
+    await page.goto(server.PREFIX + "/har.html")
+    await context.tracing.stop(path=tmpdir / "trace2.zip")
+    assert (traces_dir / "name2.trace").exists()
+    assert (traces_dir / "name2.network").exists()
+
+    await browser.close()
+
+    def resource_names(resources: Dict[str, bytes]) -> List[str]:
+        return sorted(
+            [
+                re.sub(r"^resources/.*\.(html|css)$", r"resources/XXX.\g<1>", file)
+                for file in resources.keys()
+            ]
+        )
+
+    (resources, events) = parse_trace(tmpdir / "trace1.zip")
+    assert get_trace_actions(events) == ["Page.goto"]
+    assert resource_names(resources) == [
+        "resources/XXX.css",
+        "resources/XXX.html",
+        "trace.network",
+        "trace.stacks",
+        "trace.trace",
+    ]
+
+    (resources, events) = parse_trace(tmpdir / "trace2.zip")
+    assert get_trace_actions(events) == ["Page.goto"]
+    assert resource_names(resources) == [
+        "resources/XXX.css",
+        "resources/XXX.html",
+        "resources/XXX.html",
+        "trace.network",
+        "trace.stacks",
+        "trace.trace",
+    ]

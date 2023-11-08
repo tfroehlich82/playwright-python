@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 #
-# Licensed under the Apache License, Version 2.0 (the "License")
+# Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
@@ -227,9 +227,7 @@ def test_to_have_js_property_pass_null(page: Page) -> None:
     expect(locator).to_have_js_property("foo", None)
 
 
-def test_to_have_js_property_assertions_locator_to_have_text(
-    page: Page, server: Server
-) -> None:
+def test_assertions_locator_to_have_text(page: Page, server: Server) -> None:
     page.goto(server.EMPTY_PAGE)
     page.set_content("<div id=foobar>kek</div>")
     expect(page.locator("div#foobar")).to_have_text("kek")
@@ -774,3 +772,99 @@ def test_should_print_expected_value_with_custom_message(
         expect(page.get_by_text("hello"), "custom-message").to_be_visible(timeout=100)
     assert "custom-message" in str(excinfo.value)
     assert "Expected value" not in str(excinfo.value)
+
+
+def test_should_be_attached_default(page: Page) -> None:
+    page.set_content("<input></input>")
+    locator = page.locator("input")
+    expect(locator).to_be_attached()
+
+
+def test_should_be_attached_with_hidden_element(page: Page) -> None:
+    page.set_content('<button style="display:none">hello</button>')
+    locator = page.locator("button")
+    expect(locator).to_be_attached()
+
+
+def test_should_be_attached_with_not(page: Page) -> None:
+    page.set_content("<button>hello</button>")
+    locator = page.locator("input")
+    expect(locator).not_to_be_attached()
+
+
+def test_should_be_attached_with_attached_true(page: Page) -> None:
+    page.set_content("<button>hello</button>")
+    locator = page.locator("button")
+    expect(locator).to_be_attached(attached=True)
+
+
+def test_should_be_attached_with_attached_false(page: Page) -> None:
+    page.set_content("<button>hello</button>")
+    locator = page.locator("input")
+    expect(locator).to_be_attached(attached=False)
+
+
+def test_should_be_attached_with_not_and_attached_false(page: Page) -> None:
+    page.set_content("<button>hello</button>")
+    locator = page.locator("button")
+    expect(locator).not_to_be_attached(attached=False)
+
+
+def test_should_be_attached_eventually(page: Page) -> None:
+    page.set_content("<div></div>")
+    locator = page.locator("span")
+    page.locator("div").evaluate(
+        "(e) => setTimeout(() => e.innerHTML = '<span>hello</span>', 1000)"
+    )
+    expect(locator).to_be_attached()
+
+
+def test_should_be_attached_eventually_with_not(page: Page) -> None:
+    page.set_content("<div><span>Hello</span></div>")
+    locator = page.locator("span")
+    page.locator("div").evaluate("(e) => setTimeout(() => e.textContent = '', 1000)")
+    expect(locator).not_to_be_attached()
+
+
+def test_should_be_attached_fail(page: Page) -> None:
+    page.set_content("<button>Hello</button>")
+    locator = page.locator("input")
+    with pytest.raises(AssertionError) as exc_info:
+        expect(locator).to_be_attached(timeout=1000)
+    assert "locator resolved to" not in exc_info.value.args[0]
+
+
+def test_should_be_attached_fail_with_not(page: Page) -> None:
+    page.set_content("<input></input>")
+    locator = page.locator("input")
+    with pytest.raises(AssertionError) as exc_info:
+        expect(locator).not_to_be_attached(timeout=1000)
+    assert "locator resolved to <input/>" in exc_info.value.args[0]
+
+
+def test_should_be_attached_with_impossible_timeout(page: Page) -> None:
+    page.set_content("<div id=node>Text content</div>")
+    expect(page.locator("#node")).to_be_attached(timeout=1)
+
+
+def test_should_be_attached_with_impossible_timeout_not(page: Page) -> None:
+    page.set_content("<div id=node>Text content</div>")
+    expect(page.locator("no-such-thing")).not_to_be_attached(timeout=1)
+
+
+def test_should_be_able_to_set_custom_timeout(page: Page) -> None:
+    with pytest.raises(AssertionError) as exc_info:
+        expect(page.locator("#a1")).to_be_visible(timeout=111)
+    assert "LocatorAssertions.to_be_visible with timeout 111ms" in str(exc_info.value)
+
+
+def test_should_be_able_to_set_custom_global_timeout(page: Page) -> None:
+    try:
+        expect.set_options(timeout=111)
+        with pytest.raises(AssertionError) as exc_info:
+            expect(page.locator("#a1")).to_be_visible()
+        assert "LocatorAssertions.to_be_visible with timeout 111ms" in str(
+            exc_info.value
+        )
+    finally:
+        expect.set_options(timeout=5_000)

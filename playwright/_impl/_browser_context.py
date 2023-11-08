@@ -14,6 +14,7 @@
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import (
@@ -43,6 +44,8 @@ from playwright._impl._connection import (
     from_channel,
     from_nullable_channel,
 )
+from playwright._impl._console_message import ConsoleMessage
+from playwright._impl._dialog import Dialog
 from playwright._impl._event_context_manager import EventContextManagerImpl
 from playwright._impl._fetch import APIRequestContext
 from playwright._impl._frame import Frame
@@ -59,8 +62,8 @@ from playwright._impl._helper import (
     URLMatcher,
     async_readfile,
     async_writefile,
-    is_safe_close_error,
     locals_to_params,
+    parse_error,
     prepare_record_har_options,
     to_impl,
 )
@@ -68,17 +71,25 @@ from playwright._impl._network import Request, Response, Route, serialize_header
 from playwright._impl._page import BindingCall, Page, Worker
 from playwright._impl._tracing import Tracing
 from playwright._impl._wait_helper import WaitHelper
+from playwright._impl._web_error import WebError
 
 if TYPE_CHECKING:  # pragma: no cover
     from playwright._impl._browser import Browser
-    from playwright._impl._browser_type import BrowserType
+
+if sys.version_info >= (3, 8):  # pragma: no cover
+    from typing import Literal
+else:  # pragma: no cover
+    from typing_extensions import Literal
 
 
 class BrowserContext(ChannelOwner):
     Events = SimpleNamespace(
         BackgroundPage="backgroundpage",
         Close="close",
+        Console="console",
+        Dialog="dialog",
         Page="page",
+        WebError="weberror",
         ServiceWorker="serviceworker",
         Request="request",
         Response="response",
@@ -90,11 +101,15 @@ class BrowserContext(ChannelOwner):
         self, parent: ChannelOwner, type: str, guid: str, initializer: Dict
     ) -> None:
         super().__init__(parent, type, guid, initializer)
+        # circular import workaround:
+        self._browser: Optional["Browser"] = None
+        if parent.__class__.__name__ == "Browser":
+            self._browser = cast("Browser", parent)
+            self._browser._contexts.append(self)
         self._pages: List[Page] = []
         self._routes: List[RouteHandler] = []
         self._bindings: Dict[str, Any] = {}
         self._timeout_settings = TimeoutSettings(None)
-        self._browser: Optional["Browser"] = None
         self._owner_page: Optional[Page] = None
         self._options: Dict[str, Any] = {}
         self._background_pages: Set[Page] = set()
@@ -127,6 +142,21 @@ class BrowserContext(ChannelOwner):
         self._channel.on(
             "serviceWorker",
             lambda params: self._on_service_worker(from_channel(params["worker"])),
+        )
+        self._channel.on(
+            "console",
+            lambda event: self._on_console_message(event),
+        )
+
+        self._channel.on(
+            "dialog", lambda params: self._on_dialog(from_channel(params["dialog"]))
+        )
+        self._channel.on(
+            "pageError",
+            lambda params: self._on_page_error(
+                parse_error(params["error"]["error"]),
+                from_nullable_channel(params["page"]),
+            ),
         )
         self._channel.on(
             "request",
@@ -166,12 +196,15 @@ class BrowserContext(ChannelOwner):
         )
         self._set_event_to_subscription_mapping(
             {
+                BrowserContext.Events.Console: "console",
+                BrowserContext.Events.Dialog: "dialog",
                 BrowserContext.Events.Request: "request",
                 BrowserContext.Events.Response: "response",
                 BrowserContext.Events.RequestFinished: "requestFinished",
                 BrowserContext.Events.RequestFailed: "requestFailed",
             }
         )
+        self._close_was_called = False
 
     def __repr__(self) -> str:
         return f"<BrowserContext browser={self.browser}>"
@@ -183,6 +216,7 @@ class BrowserContext(ChannelOwner):
             page._opener.emit(Page.Events.Popup, page)
 
     async def _on_route(self, route: Route) -> None:
+        route._context = self
         route_handlers = self._routes.copy()
         for route_handler in route_handlers:
             if not route_handler.matches(route.request.url):
@@ -209,13 +243,19 @@ class BrowserContext(ChannelOwner):
         asyncio.create_task(binding_call.call(func))
 
     def set_default_navigation_timeout(self, timeout: float) -> None:
-        self._timeout_settings.set_navigation_timeout(timeout)
+        return self._set_default_navigation_timeout_impl(timeout)
+
+    def _set_default_navigation_timeout_impl(self, timeout: Optional[float]) -> None:
+        self._timeout_settings.set_default_navigation_timeout(timeout)
         self._channel.send_no_reply(
             "setDefaultNavigationTimeoutNoReply", dict(timeout=timeout)
         )
 
     def set_default_timeout(self, timeout: float) -> None:
-        self._timeout_settings.set_timeout(timeout)
+        return self._set_default_timeout_impl(timeout)
+
+    def _set_default_timeout_impl(self, timeout: Optional[float]) -> None:
+        self._timeout_settings.set_default_timeout(timeout)
         self._channel.send_no_reply("setDefaultTimeoutNoReply", dict(timeout=timeout))
 
     @property
@@ -226,13 +266,14 @@ class BrowserContext(ChannelOwner):
     def browser(self) -> Optional["Browser"]:
         return self._browser
 
-    def _set_browser_type(self, browser_type: "BrowserType") -> None:
-        self._browser_type = browser_type
+    def _set_options(self, context_options: Dict, browser_options: Dict) -> None:
+        self._options = context_options
         if self._options.get("recordHar"):
             self._har_recorders[""] = {
                 "path": self._options["recordHar"]["path"],
                 "content": self._options["recordHar"].get("content"),
             }
+        self._tracing._traces_dir = browser_options.get("tracesDir")
 
     async def new_page(self) -> Page:
         if self._owner_page:
@@ -328,15 +369,15 @@ class BrowserContext(ChannelOwner):
         har: Union[Path, str],
         page: Optional[Page] = None,
         url: Union[Pattern[str], str] = None,
-        content: HarContentPolicy = None,
-        mode: HarMode = None,
+        update_content: HarContentPolicy = None,
+        update_mode: HarMode = None,
     ) -> None:
         params: Dict[str, Any] = {
             "options": prepare_record_har_options(
                 {
                     "recordHarPath": har,
-                    "recordHarContent": content or "attach",
-                    "recordHarMode": mode or "minimal",
+                    "recordHarContent": update_content or "attach",
+                    "recordHarMode": update_mode or "minimal",
                     "recordHarUrlFilter": url,
                 }
             )
@@ -344,7 +385,10 @@ class BrowserContext(ChannelOwner):
         if page:
             params["page"] = page._channel
         har_id = await self._channel.send("harStart", params)
-        self._har_recorders[har_id] = {"path": str(har), "content": content or "attach"}
+        self._har_recorders[har_id] = {
+            "path": str(har),
+            "content": update_content or "attach",
+        }
 
     async def route_from_har(
         self,
@@ -352,12 +396,16 @@ class BrowserContext(ChannelOwner):
         url: Union[Pattern[str], str] = None,
         not_found: RouteFromHarNotFoundPolicy = None,
         update: bool = None,
-        content: HarContentPolicy = None,
-        mode: HarMode = None,
+        update_content: Literal["attach", "embed"] = None,
+        update_mode: HarMode = None,
     ) -> None:
         if update:
             await self._record_into_har(
-                har=har, page=None, url=url, content=content, mode=mode
+                har=har,
+                page=None,
+                url=url,
+                update_content=update_content,
+                update_mode=update_mode,
             )
             return
         router = await HarRouter.create(
@@ -400,7 +448,11 @@ class BrowserContext(ChannelOwner):
         self.emit(BrowserContext.Events.Close, self)
 
     async def close(self) -> None:
-        try:
+        if self._close_was_called:
+            return
+        self._close_was_called = True
+
+        async def _inner_close() -> None:
             for har_id, params in self._har_recorders.items():
                 har = cast(
                     Artifact,
@@ -422,14 +474,10 @@ class BrowserContext(ChannelOwner):
                 else:
                     await har.save_as(params["path"])
                 await har.delete()
-            await self._channel.send("close")
-            await self._closed_future
-        except Exception as e:
-            if not is_safe_close_error(e):
-                raise e
 
-    async def _pause(self) -> None:
-        await self._channel.send("pause")
+        await self._channel._connection.wrap_api_call(_inner_close, True)
+        await self._channel.send("close")
+        await self._closed_future
 
     async def storage_state(self, path: Union[str, Path] = None) -> StorageState:
         result = await self._channel.send_return_as_dict("storageState")
@@ -443,6 +491,13 @@ class BrowserContext(ChannelOwner):
         async with self.expect_event(event, predicate, timeout) as event_info:
             pass
         return await event_info
+
+    def expect_console_message(
+        self,
+        predicate: Callable[[ConsoleMessage], bool] = None,
+        timeout: float = None,
+    ) -> EventContextManagerImpl[ConsoleMessage]:
+        return self.expect_event(Page.Events.Console, predicate, timeout)
 
     def expect_page(
         self,
@@ -486,6 +541,33 @@ class BrowserContext(ChannelOwner):
             page.emit(Page.Events.RequestFinished, request)
         if response:
             response._finished_future.set_result(True)
+
+    def _on_console_message(self, event: Dict) -> None:
+        message = ConsoleMessage(event, self._loop, self._dispatcher_fiber)
+        self.emit(BrowserContext.Events.Console, message)
+        page = message.page
+        if page:
+            page.emit(Page.Events.Console, message)
+
+    def _on_dialog(self, dialog: Dialog) -> None:
+        has_listeners = self.emit(BrowserContext.Events.Dialog, dialog)
+        page = dialog.page
+        if page:
+            has_listeners = page.emit(Page.Events.Dialog, dialog) or has_listeners
+        if not has_listeners:
+            # Although we do similar handling on the server side, we still need this logic
+            # on the client side due to a possible race condition between two async calls:
+            # a) removing "dialog" listener subscription (client->server)
+            # b) actual "dialog" event (server->client)
+            if dialog.type == "beforeunload":
+                asyncio.create_task(dialog.accept())
+            else:
+                asyncio.create_task(dialog.dismiss())
+
+    def _on_page_error(self, error: Error, page: Optional[Page]) -> None:
+        self.emit(BrowserContext.Events.WebError, WebError(self._loop, page, error))
+        if page:
+            page.emit(Page.Events.PageError, error)
 
     def _on_request(self, request: Request, page: Optional[Page]) -> None:
         self.emit(BrowserContext.Events.Request, request)

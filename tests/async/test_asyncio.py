@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 #
-# Licensed under the Apache License, Version 2.0 (the "License")
+# Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
@@ -17,7 +17,9 @@ from typing import Dict
 
 import pytest
 
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
+
+from ..server import Server
 
 
 async def test_should_cancel_underlying_protocol_calls(
@@ -48,3 +50,37 @@ async def test_should_cancel_underlying_protocol_calls(
     assert handler_exception is None
 
     asyncio.get_running_loop().set_exception_handler(None)
+
+
+async def test_async_playwright_stop_multiple_times() -> None:
+    playwright = await async_playwright().start()
+    await playwright.stop()
+    await playwright.stop()
+
+
+async def test_cancel_pending_protocol_call_on_playwright_stop(server: Server) -> None:
+    server.set_route("/hang", lambda _: None)
+    playwright = await async_playwright().start()
+    api_request_context = await playwright.request.new_context()
+    pending_task = asyncio.create_task(api_request_context.get(server.PREFIX + "/hang"))
+    await playwright.stop()
+    with pytest.raises(Exception) as exc_info:
+        await pending_task
+    assert "Connection closed" in str(exc_info.value)
+
+
+async def test_should_collect_stale_handles(page: Page, server: Server) -> None:
+    page.on("request", lambda: None)
+    response = await page.goto(server.PREFIX + "/title.html")
+    for i in range(1000):
+        await page.evaluate(
+            """async () => {
+            const response = await fetch('/');
+            await response.text();
+        }"""
+        )
+    with pytest.raises(Exception) as exc_info:
+        await response.all_headers()
+    assert "The object has been collected to prevent unbounded heap growth." in str(
+        exc_info.value
+    )

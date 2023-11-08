@@ -19,14 +19,24 @@ import inspect
 import sys
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Union,
+    cast,
+)
 
 from greenlet import greenlet
 from pyee import EventEmitter
 from pyee.asyncio import AsyncIOEventEmitter
 
 import playwright
-from playwright._impl._helper import ParsedMessagePayload, parse_error
+from playwright._impl._helper import Error, ParsedMessagePayload, parse_error
 from playwright._impl._transport import Transport
 
 if TYPE_CHECKING:
@@ -41,11 +51,11 @@ else:  # pragma: no cover
 
 
 class Channel(AsyncIOEventEmitter):
-    def __init__(self, connection: "Connection", guid: str) -> None:
+    def __init__(self, connection: "Connection", object: "ChannelOwner") -> None:
         super().__init__()
-        self._connection: Connection = connection
-        self._guid = guid
-        self._object: Optional[ChannelOwner] = None
+        self._connection = connection
+        self._guid = object._guid
+        self._object = object
 
     async def send(self, method: str, params: Dict = None) -> Any:
         return await self._connection.wrap_api_call(
@@ -58,9 +68,10 @@ class Channel(AsyncIOEventEmitter):
         )
 
     def send_no_reply(self, method: str, params: Dict = None) -> None:
+        # No reply messages are used to e.g. waitForEventInfo(after).
         self._connection.wrap_api_call_sync(
             lambda: self._connection._send_message_to_server(
-                self._guid, method, {} if params is None else params
+                self._object, method, {} if params is None else params, True
             )
         )
 
@@ -69,7 +80,9 @@ class Channel(AsyncIOEventEmitter):
     ) -> Any:
         if params is None:
             params = {}
-        callback = self._connection._send_message_to_server(self._guid, method, params)
+        callback = self._connection._send_message_to_server(
+            self._object, method, params
+        )
         if self._connection._error:
             error = self._connection._error
             self._connection._error = None
@@ -110,7 +123,7 @@ class ChannelOwner(AsyncIOEventEmitter):
         self._loop: asyncio.AbstractEventLoop = parent._loop
         self._dispatcher_fiber: Any = parent._dispatcher_fiber
         self._type = type
-        self._guid = guid
+        self._guid: str = guid
         self._connection: Connection = (
             parent._connection if isinstance(parent, ChannelOwner) else parent
         )
@@ -118,9 +131,9 @@ class ChannelOwner(AsyncIOEventEmitter):
             parent if isinstance(parent, ChannelOwner) else None
         )
         self._objects: Dict[str, "ChannelOwner"] = {}
-        self._channel: Channel = Channel(self._connection, guid)
-        self._channel._object = self
+        self._channel: Channel = Channel(self._connection, self)
         self._initializer = initializer
+        self._was_collected = False
 
         self._connection._objects[guid] = self
         if self._parent:
@@ -128,15 +141,16 @@ class ChannelOwner(AsyncIOEventEmitter):
 
         self._event_to_subscription_mapping: Dict[str, str] = {}
 
-    def _dispose(self) -> None:
+    def _dispose(self, reason: Optional[str]) -> None:
         # Clean up from parent and connection.
         if self._parent:
             del self._parent._objects[self._guid]
         del self._connection._objects[self._guid]
+        self._was_collected = reason == "gc"
 
         # Dispose all children.
         for object in list(self._objects.values()):
-            object._dispose()
+            object._dispose(reason)
         self._objects.clear()
 
     def _adopt(self, child: "ChannelOwner") -> None:
@@ -150,8 +164,11 @@ class ChannelOwner(AsyncIOEventEmitter):
     def _update_subscription(self, event: str, enabled: bool) -> None:
         protocol_event = self._event_to_subscription_mapping.get(event)
         if protocol_event:
-            self._channel.send_no_reply(
-                "updateSubscription", {"event": protocol_event, "enabled": enabled}
+            self._connection.wrap_api_call_sync(
+                lambda: self._channel.send_no_reply(
+                    "updateSubscription", {"event": protocol_event, "enabled": enabled}
+                ),
+                True,
             )
 
     def _add_event_handler(self, event: str, k: Any, v: Any) -> None:
@@ -168,6 +185,7 @@ class ChannelOwner(AsyncIOEventEmitter):
 class ProtocolCallback:
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.stack_trace: traceback.StackSummary
+        self.no_reply: bool
         self.future = loop.create_future()
         # The outer task can get cancelled by the user, this forwards the cancellation to the inner task.
         current_task = asyncio.current_task()
@@ -231,7 +249,8 @@ class Connection(EventEmitter):
             Optional[ParsedStackTrace]
         ] = contextvars.ContextVar("ApiZone", default=None)
         self._local_utils: Optional["LocalUtils"] = local_utils
-        self._stack_collector: List[List[Dict[str, Any]]] = []
+        self._tracing_count = 0
+        self._closed_error_message: Optional[str] = None
 
     @property
     def local_utils(self) -> "LocalUtils":
@@ -262,16 +281,22 @@ class Connection(EventEmitter):
         self._loop.run_until_complete(self._transport.wait_until_stopped())
         self.cleanup()
 
-    async def stop_async(self) -> None:
+    async def stop_async(self, error_message: str = None) -> None:
         self._transport.request_stop()
         await self._transport.wait_until_stopped()
-        self.cleanup()
+        self.cleanup(error_message)
 
-    def cleanup(self) -> None:
+    def cleanup(self, error_message: str = None) -> None:
+        if not error_message:
+            error_message = "Connection closed"
+        self._closed_error_message = error_message
         if self._init_task and not self._init_task.done():
             self._init_task.cancel()
         for ws_connection in self._child_ws_connections:
             ws_connection._transport.dispose()
+        for callback in self._callbacks.values():
+            callback.future.set_exception(Error(error_message))
+        self._callbacks.clear()
         self.emit("close")
 
     def call_on_object_with_known_name(
@@ -279,16 +304,21 @@ class Connection(EventEmitter):
     ) -> None:
         self._waiting_for_object[guid] = callback
 
-    def start_collecting_call_metadata(self, collector: Any) -> None:
-        if collector not in self._stack_collector:
-            self._stack_collector.append(collector)
-
-    def stop_collecting_call_metadata(self, collector: Any) -> None:
-        self._stack_collector.remove(collector)
+    def set_in_tracing(self, is_tracing: bool) -> None:
+        if is_tracing:
+            self._tracing_count += 1
+        else:
+            self._tracing_count -= 1
 
     def _send_message_to_server(
-        self, guid: str, method: str, params: Dict
+        self, object: ChannelOwner, method: str, params: Dict, no_reply: bool = False
     ) -> ProtocolCallback:
+        if self._closed_error_message:
+            raise Error(self._closed_error_message)
+        if object._was_collected:
+            raise Error(
+                "The object has been collected to prevent unbounded heap growth."
+            )
         self._last_id += 1
         id = self._last_id
         callback = ProtocolCallback(self._loop)
@@ -297,10 +327,9 @@ class Connection(EventEmitter):
             traceback.StackSummary,
             getattr(task, "__pw_stack_trace__", traceback.extract_stack()),
         )
+        callback.no_reply = no_reply
         self._callbacks[id] = callback
         stack_trace_information = cast(ParsedStackTrace, self._api_zone.get())
-        for collector in self._stack_collector:
-            collector.append({"stack": stack_trace_information["frames"], "id": id})
         frames = stack_trace_information.get("frames", [])
         location = (
             {
@@ -313,7 +342,7 @@ class Connection(EventEmitter):
         )
         message = {
             "id": id,
-            "guid": guid,
+            "guid": object._guid,
             "method": method,
             "params": self._replace_channels_with_guids(params),
             "metadata": {
@@ -323,20 +352,30 @@ class Connection(EventEmitter):
                 "internal": not stack_trace_information["apiName"],
             },
         }
+        if self._tracing_count > 0 and frames and object._guid != "localUtils":
+            self.local_utils.add_stack_to_tracing_no_reply(id, frames)
+
         self._transport.send(message)
         self._callbacks[id] = callback
+
         return callback
 
     def dispatch(self, msg: ParsedMessagePayload) -> None:
+        if self._closed_error_message:
+            return
         id = msg.get("id")
         if id:
             callback = self._callbacks.pop(id)
             if callback.future.cancelled():
                 return
+            # No reply messages are used to e.g. waitForEventInfo(after) which returns exceptions on page close.
+            # To prevent 'Future exception was never retrieved' we just ignore such messages.
+            if callback.no_reply:
+                return
             error = msg.get("error")
             if error:
                 parsed_error = parse_error(error["error"])  # type: ignore
-                parsed_error.stack = "".join(
+                parsed_error._stack = "".join(
                     traceback.format_list(callback.stack_trace)[-10:]
                 )
                 callback.future.set_exception(parsed_error)
@@ -369,7 +408,8 @@ class Connection(EventEmitter):
             return
 
         if method == "__dispose__":
-            self._objects[guid]._dispose()
+            assert isinstance(params, dict)
+            self._objects[guid]._dispose(cast(Optional[str], params.get("reason")))
             return
         object = self._objects[guid]
         should_replace_guids_with_channels = "jsonPipe@" not in guid
@@ -521,3 +561,7 @@ def _extract_stack_trace_information_from_stack(
         "frames": parsed_frames,
         "apiName": "" if is_internal else api_name,
     }
+
+
+def filter_none(d: Mapping) -> Dict:
+    return {k: v for k, v in d.items() if v is not None}

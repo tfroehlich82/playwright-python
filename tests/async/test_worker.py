@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 #
-# Licensed under the Apache License, Version 2.0 (the "License")
+# Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
@@ -137,6 +137,9 @@ async def test_workers_should_clear_upon_cross_process_navigation(server, page):
     assert len(page.workers) == 0
 
 
+@pytest.mark.skip_browser(
+    "firefox"
+)  # https://github.com/microsoft/playwright/issues/21760
 async def test_workers_should_report_network_activity(page, server):
     async with page.expect_worker() as worker_info:
         await page.goto(server.PREFIX + "/worker/worker.html")
@@ -155,6 +158,9 @@ async def test_workers_should_report_network_activity(page, server):
     assert response.ok
 
 
+@pytest.mark.skip_browser(
+    "firefox"
+)  # https://github.com/microsoft/playwright/issues/21760
 async def test_workers_should_report_network_activity_on_worker_creation(page, server):
     # Chromium needs waitForDebugger enabled for this one.
     await page.goto(server.EMPTY_PAGE)

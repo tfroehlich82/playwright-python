@@ -45,7 +45,7 @@ from playwright._impl._element_handle import ElementHandle
 from playwright._impl._fetch import APIRequest, APIRequestContext, APIResponse
 from playwright._impl._file_chooser import FileChooser
 from playwright._impl._frame import Frame
-from playwright._impl._helper import to_snake_case
+from playwright._impl._helper import Error, to_snake_case
 from playwright._impl._input import Keyboard, Mouse, Touchscreen
 from playwright._impl._js_handle import JSHandle, Serializable
 from playwright._impl._locator import FrameLocator, Locator
@@ -55,6 +55,7 @@ from playwright._impl._playwright import Playwright
 from playwright._impl._selectors import Selectors
 from playwright._impl._tracing import Tracing
 from playwright._impl._video import Video
+from playwright._impl._web_error import WebError
 
 
 def process_type(value: Any, param: bool = False) -> str:
@@ -239,6 +240,7 @@ from playwright._impl._input import Keyboard as KeyboardImpl, Mouse as MouseImpl
 from playwright._impl._js_handle import JSHandle as JSHandleImpl
 from playwright._impl._network import Request as RequestImpl, Response as ResponseImpl, Route as RouteImpl, WebSocket as WebSocketImpl
 from playwright._impl._page import Page as PageImpl, Worker as WorkerImpl
+from playwright._impl._web_error import WebError as WebErrorImpl
 from playwright._impl._playwright import Playwright as PlaywrightImpl
 from playwright._impl._selectors import Selectors as SelectorsImpl
 from playwright._impl._video import Video as VideoImpl
@@ -250,7 +252,7 @@ from playwright._impl._assertions import PageAssertions as PageAssertionsImpl, L
 """
 
 
-all_types = [
+generated_types = [
     Request,
     Response,
     Route,
@@ -271,6 +273,7 @@ all_types = [
     Download,
     Video,
     Page,
+    WebError,
     BrowserContext,
     CDPSession,
     Browser,
@@ -284,6 +287,10 @@ all_types = [
     PageAssertions,
     LocatorAssertions,
     APIResponseAssertions,
+]
+
+all_types = generated_types + [
+    Error,
 ]
 
 api_globals = globals()

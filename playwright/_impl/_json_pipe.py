@@ -13,13 +13,12 @@
 # limitations under the License.
 
 import asyncio
-from typing import Dict, Optional, cast
+from typing import Dict, cast
 
 from pyee.asyncio import AsyncIOEventEmitter
 
-from playwright._impl._api_types import Error
 from playwright._impl._connection import Channel
-from playwright._impl._helper import ParsedMessagePayload, parse_error
+from playwright._impl._helper import Error, ParsedMessagePayload
 from playwright._impl._transport import Transport
 
 
@@ -37,7 +36,7 @@ class JsonPipeTransport(AsyncIOEventEmitter, Transport):
 
     def request_stop(self) -> None:
         self._stop_requested = True
-        self._loop.create_task(self._pipe_channel.send("close", {}))
+        self._pipe_channel.send_no_reply("close", {})
 
     def dispose(self) -> None:
         self.on_error_future.cancel()
@@ -50,16 +49,12 @@ class JsonPipeTransport(AsyncIOEventEmitter, Transport):
         self._stopped_future: asyncio.Future = asyncio.Future()
 
         def handle_message(message: Dict) -> None:
-            if not self._stop_requested:
-                self.on_message(cast(ParsedMessagePayload, message))
+            if self._stop_requested:
+                return
+            self.on_message(cast(ParsedMessagePayload, message))
 
-        def handle_closed(error: Optional[Dict]) -> None:
+        def handle_closed() -> None:
             self.emit("close")
-            self.on_error_future.set_exception(
-                parse_error(error["error"])
-                if error
-                else Error("Playwright connection closed")
-            )
             self._stopped_future.set_result(None)
 
         self._pipe_channel.on(
@@ -68,7 +63,7 @@ class JsonPipeTransport(AsyncIOEventEmitter, Transport):
         )
         self._pipe_channel.on(
             "closed",
-            lambda params: handle_closed(params.get("error")),
+            lambda _: handle_closed(),
         )
 
     async def run(self) -> None:
@@ -77,4 +72,4 @@ class JsonPipeTransport(AsyncIOEventEmitter, Transport):
     def send(self, message: Dict) -> None:
         if self._stop_requested:
             raise Error("Playwright connection closed")
-        self._loop.create_task(self._pipe_channel.send("send", {"message": message}))
+        self._pipe_channel.send_no_reply("send", {"message": message})

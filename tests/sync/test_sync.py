@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 #
-# Licensed under the Apache License, Version 2.0 (the "License")
+# Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import multiprocessing
 import os
+from typing import Any, Dict
 
 import pytest
 
@@ -148,10 +150,14 @@ def test_sync_wait_for_event(page: Page, server: Server) -> None:
 
 
 def test_sync_wait_for_event_raise(page: Page) -> None:
-    with pytest.raises(Error):
-        with page.expect_event("popup", timeout=500) as popup:
+    with pytest.raises(AssertionError):
+        with page.expect_event("popup", timeout=500):
             assert False
-        assert popup.value is None
+
+    with pytest.raises(Error) as exc_info:
+        with page.expect_event("popup", timeout=500):
+            page.wait_for_timeout(1_000)
+    assert "Timeout 500ms exceeded" in exc_info.value.message
 
 
 def test_sync_make_existing_page_sync(page: Page) -> None:
@@ -277,3 +283,81 @@ def test_expect_response_should_work(page: Page, server: Server) -> None:
     assert resp.value.status == 200
     assert resp.value.ok
     assert resp.value.request
+
+
+def test_expect_response_should_not_hang_when_predicate_throws(page: Page) -> None:
+    with pytest.raises(Exception, match="Oops!"):
+        with page.expect_response("**/*"):
+            raise Exception("Oops!")
+
+
+def test_expect_response_should_use_context_timeout(
+    page: Page, context: BrowserContext, server: Server
+) -> None:
+    page.goto(server.EMPTY_PAGE)
+
+    context.set_default_timeout(1_000)
+    with pytest.raises(Error) as exc_info:
+        with page.expect_response("https://playwright.dev"):
+            pass
+    assert exc_info.type is TimeoutError
+    assert "Timeout 1000ms exceeded" in exc_info.value.message
+
+
+def _test_sync_playwright_stop_multiple_times() -> None:
+    playwright = sync_playwright().start()
+    playwright.stop()
+    playwright.stop()
+
+
+def test_sync_playwright_stop_multiple_times() -> None:
+    p = multiprocessing.Process(target=_test_sync_playwright_stop_multiple_times)
+    p.start()
+    p.join()
+    assert p.exitcode == 0
+
+
+def _test_call_sync_method_after_playwright_close_with_own_loop(
+    browser_name: str,
+    launch_arguments: Dict[str, Any],
+    empty_page: str,
+) -> None:
+    playwright = sync_playwright().start()
+    browser = playwright[browser_name].launch(**launch_arguments)
+    context = browser.new_context()
+    page = context.new_page()
+    page.goto(empty_page)
+    playwright.stop()
+    with pytest.raises(Error) as exc:
+        page.evaluate("1+1")
+    assert "Event loop is closed! Is Playwright already stopped?" in str(exc.value)
+
+
+def test_call_sync_method_after_playwright_close_with_own_loop(
+    server: Server, browser_name: str, launch_arguments: Dict[str, Any]
+) -> None:
+    p = multiprocessing.Process(
+        target=_test_call_sync_method_after_playwright_close_with_own_loop,
+        args=[browser_name, launch_arguments, server.EMPTY_PAGE],
+    )
+    p.start()
+    p.join()
+    assert p.exitcode == 0
+
+
+def test_should_collect_stale_handles(page: Page, server: Server) -> None:
+    page.on("request", lambda request: None)
+    response = page.goto(server.PREFIX + "/title.html")
+    assert response
+    for i in range(1000):
+        page.evaluate(
+            """async () => {
+            const response = await fetch('/');
+            await response.text();
+        }"""
+        )
+    with pytest.raises(Exception) as exc_info:
+        response.all_headers()
+    assert "The object has been collected to prevent unbounded heap growth." in str(
+        exc_info.value
+    )

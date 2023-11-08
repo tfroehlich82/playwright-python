@@ -542,6 +542,9 @@ async def test_wait_for_nav_should_work_with_dom_history_back_forward(page, serv
     assert page.url == server.PREFIX + "/second.html"
 
 
+@pytest.mark.skip_browser(
+    "webkit"
+)  # WebKit issues load event in some cases, but not always
 async def test_wait_for_nav_should_work_when_subframe_issues_window_stop(
     page, server, is_webkit
 ):
@@ -903,11 +906,11 @@ async def test_frame_goto_should_reject_when_frame_detaches(page, server, browse
     with pytest.raises(Error) as exc_info:
         await navigation_task
     if browser_name == "chromium":
-        assert ("frame was detached" in exc_info.value.message) or (
-            "net::ERR_ABORTED" in exc_info.value.message
+        assert "net::ERR_FAILED" in exc_info.value.message or (
+            "frame was detached" in exc_info.value.message.lower()
         )
     else:
-        assert "frame was detached" in exc_info.value.message
+        assert "frame was detached" in exc_info.value.message.lower()
 
 
 async def test_frame_goto_should_continue_after_client_redirect(page, server):
@@ -915,9 +918,9 @@ async def test_frame_goto_should_continue_after_client_redirect(page, server):
     url = server.PREFIX + "/frames/child-redirect.html"
 
     with pytest.raises(Error) as exc_info:
-        await page.goto(url, timeout=2500, wait_until="networkidle")
+        await page.goto(url, timeout=5000, wait_until="networkidle")
 
-    assert "Timeout 2500ms exceeded." in exc_info.value.message
+    assert "Timeout 5000ms exceeded." in exc_info.value.message
     assert (
         f'navigating to "{url}", waiting until "networkidle"' in exc_info.value.message
     )
