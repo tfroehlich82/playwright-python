@@ -15,14 +15,24 @@
 import asyncio
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Pattern, Set, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Optional,
+    Pattern,
+    Sequence,
+    Set,
+    Union,
+    cast,
+)
 
 from pyee import EventEmitter
 
 from playwright._impl._api_structures import AriaRole, FilePayload, Position
 from playwright._impl._connection import (
     ChannelOwner,
-    filter_none,
     from_channel,
     from_nullable_channel,
 )
@@ -470,7 +480,7 @@ class Frame(ChannelOwner):
     async def click(
         self,
         selector: str,
-        modifiers: List[KeyboardModifier] = None,
+        modifiers: Sequence[KeyboardModifier] = None,
         position: Position = None,
         delay: float = None,
         button: MouseButton = None,
@@ -486,7 +496,7 @@ class Frame(ChannelOwner):
     async def dblclick(
         self,
         selector: str,
-        modifiers: List[KeyboardModifier] = None,
+        modifiers: Sequence[KeyboardModifier] = None,
         position: Position = None,
         delay: float = None,
         button: MouseButton = None,
@@ -501,7 +511,7 @@ class Frame(ChannelOwner):
     async def tap(
         self,
         selector: str,
-        modifiers: List[KeyboardModifier] = None,
+        modifiers: Sequence[KeyboardModifier] = None,
         position: Position = None,
         timeout: float = None,
         force: bool = None,
@@ -626,7 +636,7 @@ class Frame(ChannelOwner):
     async def hover(
         self,
         selector: str,
-        modifiers: List[KeyboardModifier] = None,
+        modifiers: Sequence[KeyboardModifier] = None,
         position: Position = None,
         timeout: float = None,
         noWaitAfter: bool = None,
@@ -653,10 +663,10 @@ class Frame(ChannelOwner):
     async def select_option(
         self,
         selector: str,
-        value: Union[str, List[str]] = None,
-        index: Union[int, List[int]] = None,
-        label: Union[str, List[str]] = None,
-        element: Union["ElementHandle", List["ElementHandle"]] = None,
+        value: Union[str, Sequence[str]] = None,
+        index: Union[int, Sequence[int]] = None,
+        label: Union[str, Sequence[str]] = None,
+        element: Union["ElementHandle", Sequence["ElementHandle"]] = None,
         timeout: float = None,
         noWaitAfter: bool = None,
         strict: bool = None,
@@ -685,7 +695,9 @@ class Frame(ChannelOwner):
     async def set_input_files(
         self,
         selector: str,
-        files: Union[str, Path, FilePayload, List[Union[str, Path]], List[FilePayload]],
+        files: Union[
+            str, Path, FilePayload, Sequence[Union[str, Path]], Sequence[FilePayload]
+        ],
         strict: bool = None,
         timeout: float = None,
         noWaitAfter: bool = None,
@@ -694,14 +706,10 @@ class Frame(ChannelOwner):
         await self._channel.send(
             "setInputFiles",
             {
-                **filter_none(
-                    {
-                        "selector": selector,
-                        "strict": strict,
-                        "timeout": timeout,
-                        "noWaitAfter": noWaitAfter,
-                    }
-                ),
+                "selector": selector,
+                "strict": strict,
+                "timeout": timeout,
+                "noWaitAfter": noWaitAfter,
                 **converted,
             },
         )

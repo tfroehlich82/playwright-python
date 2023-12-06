@@ -15,7 +15,7 @@
 import asyncio
 import pathlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Pattern, Union, cast
+from typing import TYPE_CHECKING, Dict, Optional, Pattern, Sequence, Union, cast
 
 from playwright._impl._api_structures import (
     Geolocation,
@@ -28,7 +28,6 @@ from playwright._impl._browser_context import BrowserContext
 from playwright._impl._connection import (
     ChannelOwner,
     Connection,
-    filter_none,
     from_channel,
     from_nullable_channel,
 )
@@ -73,8 +72,8 @@ class BrowserType(ChannelOwner):
         self,
         executablePath: Union[str, Path] = None,
         channel: str = None,
-        args: List[str] = None,
-        ignoreDefaultArgs: Union[bool, List[str]] = None,
+        args: Sequence[str] = None,
+        ignoreDefaultArgs: Union[bool, Sequence[str]] = None,
         handleSIGINT: bool = None,
         handleSIGTERM: bool = None,
         handleSIGHUP: bool = None,
@@ -102,8 +101,8 @@ class BrowserType(ChannelOwner):
         userDataDir: Union[str, Path],
         channel: str = None,
         executablePath: Union[str, Path] = None,
-        args: List[str] = None,
-        ignoreDefaultArgs: Union[bool, List[str]] = None,
+        args: Sequence[str] = None,
+        ignoreDefaultArgs: Union[bool, Sequence[str]] = None,
         handleSIGINT: bool = None,
         handleSIGTERM: bool = None,
         handleSIGHUP: bool = None,
@@ -124,7 +123,7 @@ class BrowserType(ChannelOwner):
         locale: str = None,
         timezoneId: str = None,
         geolocation: Geolocation = None,
-        permissions: List[str] = None,
+        permissions: Sequence[str] = None,
         extraHTTPHeaders: Dict[str, str] = None,
         offline: bool = None,
         httpCredentials: HttpCredentials = None,
@@ -200,15 +199,13 @@ class BrowserType(ChannelOwner):
         pipe_channel = (
             await local_utils._channel.send_return_as_dict(
                 "connect",
-                filter_none(
-                    {
-                        "wsEndpoint": ws_endpoint,
-                        "headers": headers,
-                        "slowMo": slow_mo,
-                        "timeout": timeout,
-                        "exposeNetwork": expose_network,
-                    }
-                ),
+                {
+                    "wsEndpoint": ws_endpoint,
+                    "headers": headers,
+                    "slowMo": slow_mo,
+                    "timeout": timeout,
+                    "exposeNetwork": expose_network,
+                },
             )
         )["pipe"]
         transport = JsonPipeTransport(self._connection._loop, pipe_channel)

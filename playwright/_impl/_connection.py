@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import collections.abc
 import contextvars
 import datetime
 import inspect
@@ -82,7 +83,7 @@ class Channel(AsyncIOEventEmitter):
         if params is None:
             params = {}
         callback = self._connection._send_message_to_server(
-            self._object, method, params
+            self._object, method, _filter_none(params)
         )
         if self._connection._error:
             error = self._connection._error
@@ -455,7 +456,9 @@ class Connection(EventEmitter):
             return payload
         if isinstance(payload, Path):
             return str(payload)
-        if isinstance(payload, list):
+        if isinstance(payload, collections.abc.Sequence) and not isinstance(
+            payload, str
+        ):
             return list(map(self._replace_channels_with_guids, payload))
         if isinstance(payload, Channel):
             return dict(guid=payload._guid)
@@ -565,7 +568,7 @@ def _extract_stack_trace_information_from_stack(
     }
 
 
-def filter_none(d: Mapping) -> Dict:
+def _filter_none(d: Mapping) -> Dict:
     return {k: v for k, v in d.items() if v is not None}
 
 
