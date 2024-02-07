@@ -152,6 +152,8 @@ class Page(ChannelOwner):
         self._video: Optional[Video] = None
         self._opener = cast("Page", from_nullable_channel(initializer.get("opener")))
         self._close_reason: Optional[str] = None
+        self._close_was_called = False
+        self._har_routers: List[HarRouter] = []
 
         self._channel.on(
             "bindingCall",
@@ -238,7 +240,12 @@ class Page(ChannelOwner):
         route._context = self.context
         route_handlers = self._routes.copy()
         for route_handler in route_handlers:
+            # If the page was closed we stall all requests right away.
+            if self._close_was_called or self.context._close_was_called:
+                return
             if not route_handler.matches(route.request.url):
+                continue
+            if route_handler not in self._routes:
                 continue
             if route_handler.will_expire:
                 self._routes.remove(route_handler)
@@ -272,6 +279,7 @@ class Page(ChannelOwner):
             self._browser_context._pages.remove(self)
         if self in self._browser_context._background_pages:
             self._browser_context._background_pages.remove(self)
+        self._dispose_har_routers()
         self.emit(Page.Events.Close, self)
 
     def _on_crash(self) -> None:
@@ -494,7 +502,7 @@ class Page(ChannelOwner):
     async def wait_for_url(
         self,
         url: URLMatch,
-        wait_until: DocumentLoadState = None,
+        waitUntil: DocumentLoadState = None,
         timeout: float = None,
     ) -> None:
         return await self._main_frame.wait_for_url(**locals_to_params(locals()))
@@ -585,38 +593,68 @@ class Page(ChannelOwner):
     async def unroute(
         self, url: URLMatch, handler: Optional[RouteHandlerCallback] = None
     ) -> None:
-        self._routes = list(
-            filter(
-                lambda r: r.matcher.match != url or (handler and r.handler != handler),
-                self._routes,
+        removed = []
+        remaining = []
+        for route in self._routes:
+            if route.matcher.match != url or (handler and route.handler != handler):
+                remaining.append(route)
+            else:
+                removed.append(route)
+        await self._unroute_internal(removed, remaining, "default")
+
+    async def _unroute_internal(
+        self,
+        removed: List[RouteHandler],
+        remaining: List[RouteHandler],
+        behavior: Literal["default", "ignoreErrors", "wait"] = None,
+    ) -> None:
+        self._routes = remaining
+        await self._update_interception_patterns()
+        if behavior is None or behavior == "default":
+            return
+        await asyncio.gather(
+            *map(
+                lambda route: route.stop(behavior),  # type: ignore
+                removed,
             )
         )
-        await self._update_interception_patterns()
+
+    def _dispose_har_routers(self) -> None:
+        for router in self._har_routers:
+            router.dispose()
+        self._har_routers = []
+
+    async def unroute_all(
+        self, behavior: Literal["default", "ignoreErrors", "wait"] = None
+    ) -> None:
+        await self._unroute_internal(self._routes, [], behavior)
+        self._dispose_har_routers()
 
     async def route_from_har(
         self,
         har: Union[Path, str],
         url: Union[Pattern[str], str] = None,
-        not_found: RouteFromHarNotFoundPolicy = None,
+        notFound: RouteFromHarNotFoundPolicy = None,
         update: bool = None,
-        update_content: Literal["attach", "embed"] = None,
-        update_mode: HarMode = None,
+        updateContent: Literal["attach", "embed"] = None,
+        updateMode: HarMode = None,
     ) -> None:
         if update:
             await self._browser_context._record_into_har(
                 har=har,
                 page=self,
                 url=url,
-                update_content=update_content,
-                update_mode=update_mode,
+                update_content=updateContent,
+                update_mode=updateMode,
             )
             return
         router = await HarRouter.create(
             local_utils=self._connection.local_utils,
             file=str(har),
-            not_found_action=not_found or "abort",
+            not_found_action=notFound or "abort",
             url_matcher=url,
         )
+        self._har_routers.append(router)
         await router.add_page_route(self)
 
     async def _update_interception_patterns(self) -> None:
@@ -638,7 +676,8 @@ class Page(ChannelOwner):
         caret: Literal["hide", "initial"] = None,
         scale: Literal["css", "device"] = None,
         mask: Sequence["Locator"] = None,
-        mask_color: str = None,
+        maskColor: str = None,
+        style: str = None,
     ) -> bytes:
         params = locals_to_params(locals())
         if "path" in params:
@@ -667,6 +706,7 @@ class Page(ChannelOwner):
 
     async def close(self, runBeforeUnload: bool = None, reason: str = None) -> None:
         self._close_reason = reason
+        self._close_was_called = True
         try:
             await self._channel.send("close", locals_to_params(locals()))
             if self._owned_context:
@@ -736,17 +776,17 @@ class Page(ChannelOwner):
     def locator(
         self,
         selector: str,
-        has_text: Union[str, Pattern[str]] = None,
-        has_not_text: Union[str, Pattern[str]] = None,
+        hasText: Union[str, Pattern[str]] = None,
+        hasNotText: Union[str, Pattern[str]] = None,
         has: "Locator" = None,
-        has_not: "Locator" = None,
+        hasNot: "Locator" = None,
     ) -> "Locator":
         return self._main_frame.locator(
             selector,
-            has_text=has_text,
-            has_not_text=has_not_text,
+            hasText=hasText,
+            hasNotText=hasNotText,
             has=has,
-            has_not=has_not,
+            hasNot=hasNot,
         )
 
     def get_by_alt_text(
@@ -1075,10 +1115,10 @@ class Page(ChannelOwner):
     def expect_navigation(
         self,
         url: URLMatch = None,
-        wait_until: DocumentLoadState = None,
+        waitUntil: DocumentLoadState = None,
         timeout: float = None,
     ) -> EventContextManagerImpl[Response]:
-        return self.main_frame.expect_navigation(url, wait_until, timeout)
+        return self.main_frame.expect_navigation(url, waitUntil, timeout)
 
     def expect_popup(
         self,
@@ -1089,17 +1129,17 @@ class Page(ChannelOwner):
 
     def expect_request(
         self,
-        url_or_predicate: URLMatchRequest,
+        urlOrPredicate: URLMatchRequest,
         timeout: float = None,
     ) -> EventContextManagerImpl[Request]:
         matcher = (
             None
-            if callable(url_or_predicate)
+            if callable(urlOrPredicate)
             else URLMatcher(
-                self._browser_context._options.get("baseURL"), url_or_predicate
+                self._browser_context._options.get("baseURL"), urlOrPredicate
             )
         )
-        predicate = url_or_predicate if callable(url_or_predicate) else None
+        predicate = urlOrPredicate if callable(urlOrPredicate) else None
 
         def my_predicate(request: Request) -> bool:
             if matcher:
@@ -1108,7 +1148,7 @@ class Page(ChannelOwner):
                 return predicate(request)
             return True
 
-        trimmed_url = trim_url(url_or_predicate)
+        trimmed_url = trim_url(urlOrPredicate)
         log_line = f"waiting for request {trimmed_url}" if trimmed_url else None
         return self._expect_event(
             Page.Events.Request,
@@ -1128,17 +1168,17 @@ class Page(ChannelOwner):
 
     def expect_response(
         self,
-        url_or_predicate: URLMatchResponse,
+        urlOrPredicate: URLMatchResponse,
         timeout: float = None,
     ) -> EventContextManagerImpl[Response]:
         matcher = (
             None
-            if callable(url_or_predicate)
+            if callable(urlOrPredicate)
             else URLMatcher(
-                self._browser_context._options.get("baseURL"), url_or_predicate
+                self._browser_context._options.get("baseURL"), urlOrPredicate
             )
         )
-        predicate = url_or_predicate if callable(url_or_predicate) else None
+        predicate = urlOrPredicate if callable(urlOrPredicate) else None
 
         def my_predicate(response: Response) -> bool:
             if matcher:
@@ -1147,7 +1187,7 @@ class Page(ChannelOwner):
                 return predicate(response)
             return True
 
-        trimmed_url = trim_url(url_or_predicate)
+        trimmed_url = trim_url(urlOrPredicate)
         log_line = f"waiting for response {trimmed_url}" if trimmed_url else None
         return self._expect_event(
             Page.Events.Response,

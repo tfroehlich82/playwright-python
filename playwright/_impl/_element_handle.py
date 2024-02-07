@@ -297,7 +297,8 @@ class ElementHandle(JSHandle):
         caret: Literal["hide", "initial"] = None,
         scale: Literal["css", "device"] = None,
         mask: Sequence["Locator"] = None,
-        mask_color: str = None,
+        maskColor: str = None,
+        style: str = None,
     ) -> bytes:
         params = locals_to_params(locals())
         if "path" in params:
