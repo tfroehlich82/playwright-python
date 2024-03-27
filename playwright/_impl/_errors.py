@@ -16,7 +16,6 @@
 # stable API.
 
 
-from builtins import TimeoutError as TimeoutErrorBuiltin
 from typing import Optional
 
 
@@ -44,10 +43,18 @@ class Error(Exception):
         return self._stack
 
 
-class TimeoutError(Error, TimeoutErrorBuiltin):
+class TimeoutError(Error):
     pass
 
 
 class TargetClosedError(Error):
     def __init__(self, message: str = None) -> None:
         super().__init__(message or "Target page, context or browser has been closed")
+
+
+def rewrite_error(error: Exception, message: str) -> Exception:
+    rewritten_exc = type(error)(message)
+    if isinstance(rewritten_exc, Error) and isinstance(error, Error):
+        rewritten_exc._name = error.name
+        rewritten_exc._stack = error.stack
+    return rewritten_exc
