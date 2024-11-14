@@ -37,14 +37,20 @@ from typing import (
 from urllib.parse import urljoin
 
 from playwright._impl._api_structures import NameValue
-from playwright._impl._errors import Error, TargetClosedError, TimeoutError
+from playwright._impl._errors import (
+    Error,
+    TargetClosedError,
+    TimeoutError,
+    is_target_closed_error,
+    rewrite_error,
+)
 from playwright._impl._glob import glob_to_regex
 from playwright._impl._greenlets import RouteGreenlet
 from playwright._impl._str_utils import escape_regex_flags
 
 if TYPE_CHECKING:  # pragma: no cover
     from playwright._impl._api_structures import HeadersArray
-    from playwright._impl._network import Request, Response, Route
+    from playwright._impl._network import Request, Response, Route, WebSocketRoute
 
 URLMatch = Union[str, Pattern[str], Callable[[str], bool]]
 URLMatchRequest = Union[str, Pattern[str], Callable[["Request"], bool]]
@@ -52,12 +58,13 @@ URLMatchResponse = Union[str, Pattern[str], Callable[["Response"], bool]]
 RouteHandlerCallback = Union[
     Callable[["Route"], Any], Callable[["Route", "Request"], Any]
 ]
+WebSocketRouteHandlerCallback = Callable[["WebSocketRoute"], Any]
 
 ColorScheme = Literal["dark", "light", "no-preference", "null"]
 ForcedColors = Literal["active", "none", "null"]
 ReducedMotion = Literal["no-preference", "null", "reduce"]
 DocumentLoadState = Literal["commit", "domcontentloaded", "load", "networkidle"]
-KeyboardModifier = Literal["Alt", "Control", "Meta", "Shift"]
+KeyboardModifier = Literal["Alt", "Control", "ControlOrMeta", "Meta", "Shift"]
 MouseButton = Literal["left", "middle", "right"]
 ServiceWorkersPolicy = Literal["allow", "block"]
 HarMode = Literal["full", "minimal"]
@@ -229,7 +236,7 @@ def patch_error_message(message: str) -> str:
     if match:
         message = to_snake_case(match.group(1)) + match.group(2)
     message = message.replace(
-        "Pass { acceptDownloads: true }", "Pass { accept_downloads: True }"
+        "Pass { acceptDownloads: true }", "Pass 'accept_downloads=True'"
     )
     return message
 
@@ -240,7 +247,11 @@ def locals_to_params(args: Dict) -> Dict:
         if key == "self":
             continue
         if args[key] is not None:
-            copy[key] = args[key]
+            copy[key] = (
+                args[key]
+                if not isinstance(args[key], Dict)
+                else locals_to_params(args[key])
+            )
     return copy
 
 
@@ -287,6 +298,14 @@ class RouteHandler:
             # If the handler was stopped (without waiting for completion), we ignore all exceptions.
             if self._ignore_exception:
                 return False
+            if is_target_closed_error(e):
+                # We are failing in the handler because the target has closed.
+                # Give user a hint!
+                optional_async_prefix = "await " if not self._is_sync else ""
+                raise rewrite_error(
+                    e,
+                    f"\"{str(e)}\" while running route callback.\nConsider awaiting `{optional_async_prefix}page.unroute_all(behavior='ignoreErrors')`\nbefore the end of the test to ignore remaining routes in flight.",
+                )
             raise e
         finally:
             handler_invocation.complete.set_result(None)

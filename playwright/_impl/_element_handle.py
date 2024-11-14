@@ -157,9 +157,8 @@ class ElementHandle(JSHandle):
         params = locals_to_params(
             dict(
                 timeout=timeout,
-                noWaitAfter=noWaitAfter,
                 force=force,
-                **convert_select_option_values(value, index, label, element)
+                **convert_select_option_values(value, index, label, element),
             )
         )
         return await self._channel.send("selectOption", params)
@@ -206,7 +205,6 @@ class ElementHandle(JSHandle):
             "setInputFiles",
             {
                 "timeout": timeout,
-                "noWaitAfter": noWaitAfter,
                 **converted,
             },
         )
@@ -246,7 +244,6 @@ class ElementHandle(JSHandle):
                 position=position,
                 timeout=timeout,
                 force=force,
-                noWaitAfter=noWaitAfter,
                 trial=trial,
             )
         else:
@@ -254,7 +251,6 @@ class ElementHandle(JSHandle):
                 position=position,
                 timeout=timeout,
                 force=force,
-                noWaitAfter=noWaitAfter,
                 trial=trial,
             )
 

@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List
 
-from playwright.sync_api import Browser, BrowserContext, BrowserType, Page
+from playwright.sync_api import Browser, BrowserContext, BrowserType, Page, Response
 from tests.server import Server
 from tests.utils import get_trace_actions, parse_trace
 
@@ -112,7 +113,6 @@ def test_should_collect_trace_with_resources_but_no_js(
         "Page.wait_for_timeout",
         "Page.route",
         "Page.goto",
-        "Route.continue_",
         "Page.goto",
         "Page.close",
     ]
@@ -137,6 +137,35 @@ def test_should_collect_trace_with_resources_but_no_js(
     )[0]
     assert script
     assert script["snapshot"]["response"]["content"].get("_sha1") is None
+
+
+def test_should_correctly_determine_sync_apiname(
+    context: BrowserContext, page: Page, server: Server, tmpdir: Path
+) -> None:
+    context.tracing.start(screenshots=True, snapshots=True)
+    received_response = threading.Event()
+
+    def _handle_response(response: Response) -> None:
+        response.request.all_headers()
+        response.text()
+        received_response.set()
+
+    page.once("response", _handle_response)
+    page.goto(server.PREFIX + "/grid.html")
+    received_response.wait()
+
+    page.close()
+    trace_file_path = tmpdir / "trace.zip"
+    context.tracing.stop(path=trace_file_path)
+
+    (_, events) = parse_trace(trace_file_path)
+    assert events[0]["type"] == "context-options"
+    assert get_trace_actions(events) == [
+        "Page.goto",
+        "Request.all_headers",
+        "Response.text",
+        "Page.close",
+    ]
 
 
 def test_should_collect_two_traces(

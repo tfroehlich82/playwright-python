@@ -109,7 +109,9 @@ async def test_should_send_a_character_with_send_character(
         '() => window.addEventListener("keydown", e => e.preventDefault(), true)'
     )
     await page.keyboard.insert_text("a")
-    assert await page.evaluate('() => document.querySelector("textarea").value') == "嗨a"
+    assert (
+        await page.evaluate('() => document.querySelector("textarea").value') == "嗨a"
+    )
 
 
 async def test_should_only_emit_input_event(page: Page, server: Server) -> None:
@@ -459,24 +461,19 @@ async def test_should_type_emoji_into_an_iframe(
     )
 
 
-async def test_should_handle_select_all(
-    page: Page, server: Server, is_mac: bool
-) -> None:
+async def test_should_handle_select_all(page: Page, server: Server) -> None:
     await page.goto(server.PREFIX + "/input/textarea.html")
     textarea = await page.query_selector("textarea")
     assert textarea
     await textarea.type("some text")
-    modifier = "Meta" if is_mac else "Control"
-    await page.keyboard.down(modifier)
+    await page.keyboard.down("ControlOrMeta")
     await page.keyboard.press("a")
-    await page.keyboard.up(modifier)
+    await page.keyboard.up("ControlOrMeta")
     await page.keyboard.press("Backspace")
     assert await page.eval_on_selector("textarea", "textarea => textarea.value") == ""
 
 
-async def test_should_be_able_to_prevent_select_all(
-    page: Page, server: Server, is_mac: bool
-) -> None:
+async def test_should_be_able_to_prevent_select_all(page: Page, server: Server) -> None:
     await page.goto(server.PREFIX + "/input/textarea.html")
     textarea = await page.query_selector("textarea")
     assert textarea
@@ -491,10 +488,9 @@ async def test_should_be_able_to_prevent_select_all(
   }""",
     )
 
-    modifier = "Meta" if is_mac else "Control"
-    await page.keyboard.down(modifier)
+    await page.keyboard.down("ControlOrMeta")
     await page.keyboard.press("a")
-    await page.keyboard.up(modifier)
+    await page.keyboard.up("ControlOrMeta")
     await page.keyboard.press("Backspace")
     assert (
         await page.eval_on_selector("textarea", "textarea => textarea.value")

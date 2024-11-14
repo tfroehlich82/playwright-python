@@ -670,7 +670,6 @@ class Frame(ChannelOwner):
             dict(
                 selector=selector,
                 timeout=timeout,
-                noWaitAfter=noWaitAfter,
                 strict=strict,
                 force=force,
                 **convert_select_option_values(value, index, label, element),
@@ -703,7 +702,6 @@ class Frame(ChannelOwner):
                 "selector": selector,
                 "strict": strict,
                 "timeout": timeout,
-                "noWaitAfter": noWaitAfter,
                 **converted,
             },
         )
@@ -792,7 +790,6 @@ class Frame(ChannelOwner):
                 position=position,
                 timeout=timeout,
                 force=force,
-                noWaitAfter=noWaitAfter,
                 strict=strict,
                 trial=trial,
             )
@@ -802,7 +799,6 @@ class Frame(ChannelOwner):
                 position=position,
                 timeout=timeout,
                 force=force,
-                noWaitAfter=noWaitAfter,
                 strict=strict,
                 trial=trial,
             )
